@@ -11,28 +11,38 @@ document.addEventListener('DOMContentLoaded', function () {
     });
   }
 
-  // Pre-fill contact form when a package was selected on the homepage
-  // (e.g. contact.html?package=Gold)
+  // Pre-fill contact form when a service or package was selected on another page
+  // (e.g. contact.html?package=Gold or contact.html?service=Personal+Taxes)
   try {
     var params = new URLSearchParams(window.location.search);
-    var pkg = params.get('package');
-    var validPackages = ['Silver', 'Gold', 'Platinum', 'Custom'];
-    if (pkg && validPackages.indexOf(pkg) !== -1) {
+    var pick = params.get('package') || params.get('service');
+    var valid = {
+      'Silver': 'the Silver bookkeeping plan',
+      'Gold': 'the Gold bookkeeping plan',
+      'Platinum': 'the Platinum bookkeeping plan',
+      'Custom': 'a custom bookkeeping package',
+      'Personal Taxes': 'Personal Tax filing',
+      'Corporate Taxes': 'Corporate Tax filing',
+      'Consultation': 'a consultation'
+    };
+    if (pick && valid[pick]) {
       var select = document.getElementById('package-select');
       var msg = document.getElementById('message-field');
       var banner = document.getElementById('package-banner');
       var bannerName = document.getElementById('package-banner-name');
 
-      if (select) { select.value = pkg; }
+      if (select) { select.value = pick; }
       if (msg && !msg.value) {
-        if (pkg === 'Custom') {
+        if (pick === 'Custom') {
           msg.value = "I'd like a quote for a custom bookkeeping package. My needs are: ";
+        } else if (pick === 'Consultation') {
+          msg.value = "I'd like to book a consultation. Please get in touch to arrange a time.";
         } else {
-          msg.value = "I'm interested in signing up for the " + pkg + " bookkeeping package. Please get in touch.";
+          msg.value = "I'm interested in " + valid[pick] + ". Please get in touch.";
         }
       }
       if (banner && bannerName) {
-        bannerName.textContent = pkg;
+        bannerName.textContent = pick;
         banner.style.display = 'block';
       }
     }

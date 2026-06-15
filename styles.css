@@ -122,6 +122,20 @@ img { max-width: 100%; display: block; }
 .nav a.active { color: var(--teal); }
 .nav .btn { padding: .6rem 1.2rem; }
 
+/* dropdown */
+.nav .has-drop { position: relative; }
+.nav .has-drop > .drop-toggle { cursor: pointer; }
+.nav .drop-menu {
+  position: absolute; top: 100%; left: 0; margin-top: .5rem;
+  background: #fff; border: 1px solid var(--line); border-radius: 12px;
+  box-shadow: var(--shadow-md); padding: .5rem; min-width: 230px;
+  display: none; z-index: 60;
+}
+.nav .has-drop:hover .drop-menu { display: block; }
+.nav .drop-menu a { display: block; padding: .6rem .8rem; border-radius: 8px; font-size: .92rem; }
+.nav .drop-menu a:hover { background: var(--mist); color: var(--teal); text-decoration: none; }
+.nav .drop-menu a small { display: block; color: var(--slate); font-size: .78rem; font-weight: 400; }
+
 .nav-toggle { display: none; background: none; border: 0; cursor: pointer; padding: 6px; }
 .nav-toggle span { display: block; width: 24px; height: 2px; background: var(--navy); margin: 5px 0; transition: .25s; }
 
@@ -340,6 +354,8 @@ section { padding: 78px 0; }
   }
   .nav.open { display: flex; }
   .nav a { padding:.7rem 0; border-bottom:1px solid var(--line); }
+  .nav .has-drop .drop-menu { position: static; display: block; box-shadow: none; border: none; padding: 0 0 0 1rem; margin: 0; min-width: 0; }
+  .nav .has-drop .drop-menu a { border-bottom: 1px solid var(--line); }
   .nav .btn { margin-top:.6rem; justify-content:center; }
   .nav-toggle { display:block; }
   .trio, .svc-grid, .why, .pkgs, .quotes, .blog-grid, .two-col, .contact-grid, .split { grid-template-columns: 1fr; }
