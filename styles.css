@@ -131,7 +131,8 @@ img { max-width: 100%; display: block; }
   box-shadow: var(--shadow-md); padding: .5rem; min-width: 230px;
   display: none; z-index: 60;
 }
-.nav .has-drop:hover .drop-menu { display: block; }
+.nav .has-drop:hover .drop-menu,
+.nav .has-drop.open .drop-menu { display: block; }
 .nav .drop-menu a { display: block; padding: .6rem .8rem; border-radius: 8px; font-size: .92rem; }
 .nav .drop-menu a:hover { background: var(--mist); color: var(--teal); text-decoration: none; }
 .nav .drop-menu a small { display: block; color: var(--slate); font-size: .78rem; font-weight: 400; }

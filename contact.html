@@ -35,6 +35,7 @@
       <span class="has-drop">
         <a href="services.html" class="drop-toggle">Services ▾</a>
         <span class="drop-menu">
+          <a href="services.html">All Services<small>Overview of everything</small></a>
           <a href="tax.html">Tax Filing<small>Personal &amp; corporate</small></a>
           <a href="bookkeeping.html">Bookkeeping &amp; Accounting<small>Silver, Gold, Platinum</small></a>
           <a href="consultation.html">Consultation<small>Talk to an expert</small></a>
@@ -65,18 +66,15 @@
         <div id="package-banner" style="display:none;background:#eaf7f7;border:1px solid var(--teal);color:var(--navy);padding:.85rem 1.1rem;border-radius:10px;margin-bottom:1.2rem;font-size:.95rem;">
           You've selected the <strong id="package-banner-name"></strong> package. Just add your details below and submit — we'll be in touch.
         </div>
-        <form data-static>
+        <form action="https://formspree.io/f/xeewnpzy" method="POST" class="ajax-form">
           <div class="row2">
-            <div class="field"><label>Full Name *</label><input type="text" required></div>
-            <div class="field"><label>Email Address *</label><input type="email" required></div>
+            <div class="field"><label>Full Name *</label><input type="text" name="name" required></div>
+            <div class="field"><label>Email Address *</label><input type="email" name="email" required></div>
           </div>
-          <div class="row2">
-            <div class="field"><label>Business Address *</label><input type="text" required></div>
-            <div class="field"><label>Phone Number *</label><input type="tel" required></div>
-          </div>
+          <div class="field"><label>Phone Number *</label><input type="tel" name="phone" required></div>
           <div class="field">
             <label>Service / Package of Interest</label>
-            <select id="package-select">
+            <select id="package-select" name="service">
               <option value="">General inquiry</option>
               <option value="Personal Taxes">Tax Filing — Personal Taxes (from $70)</option>
               <option value="Corporate Taxes">Tax Filing — Corporate Taxes (from $800)</option>
@@ -87,7 +85,8 @@
               <option value="Consultation">Consultation</option>
             </select>
           </div>
-          <div class="field"><label>Inquiry Message</label><textarea id="message-field"></textarea></div>
+          <div class="field"><label>Inquiry Message</label><textarea id="message-field" name="message"></textarea></div>
+          <input type="hidden" name="_subject" value="New contact form submission — J&M Tax website">
           <button type="submit" class="btn btn-teal">Submit</button>
           <div class="form-status"></div>
         </form>
@@ -120,22 +119,22 @@
       <h2>Booking Form</h2>
       <p class="lead" style="margin:0 auto">Schedule a consultation with our team. Choose the service that fits your needs.</p>
     </div>
-    <form data-static style="background:#fff;border:1px solid var(--line);border-radius:var(--radius);padding:2rem;box-shadow:var(--shadow-sm)">
+    <form action="https://formspree.io/f/xeewnpzy" method="POST" class="ajax-form" style="background:#fff;border:1px solid var(--line);border-radius:var(--radius);padding:2rem;box-shadow:var(--shadow-sm)">
       <div class="row2">
-        <div class="field"><label>First Name *</label><input type="text" required></div>
-        <div class="field"><label>Last Name *</label><input type="text" required></div>
+        <div class="field"><label>First Name *</label><input type="text" name="first_name" required></div>
+        <div class="field"><label>Last Name *</label><input type="text" name="last_name" required></div>
       </div>
       <div class="row2">
-        <div class="field"><label>Phone *</label><input type="tel" required></div>
-        <div class="field"><label>Email *</label><input type="email" required></div>
+        <div class="field"><label>Phone *</label><input type="tel" name="phone" required></div>
+        <div class="field"><label>Email *</label><input type="email" name="email" required></div>
       </div>
       <div class="row2">
-        <div class="field"><label>Date *</label><input type="date" required></div>
-        <div class="field"><label>Time *</label><input type="time" required></div>
+        <div class="field"><label>Date *</label><input type="date" name="preferred_date" required></div>
+        <div class="field"><label>Time *</label><input type="time" name="preferred_time" required></div>
       </div>
       <div class="field">
         <label>Service *</label>
-        <select required>
+        <select name="service" required>
           <option value="">Select a service…</option>
           <option>Personal Taxes (from $70)</option>
           <option>Corporate Taxes (from $800)</option>
@@ -145,7 +144,8 @@
           <option>Consultation</option>
         </select>
       </div>
-      <div class="field"><label>Message</label><textarea></textarea></div>
+      <div class="field"><label>Message</label><textarea name="message"></textarea></div>
+      <input type="hidden" name="_subject" value="New appointment booking — J&M Tax website">
       <button type="submit" class="btn btn-teal">Submit</button>
       <div class="form-status"></div>
     </form>
