@@ -553,7 +553,7 @@
         <div style="font-weight:500;color:var(--text2);margin-bottom:2px">Ledger Bookkeeping</div>
         <div>© 2025 · Licensed copy</div>
         <div id="last-backup-display" style="margin-top:3px;font-size:10px;color:var(--text3)"></div>
-        <div id="licence-key-display" style="margin-top:4px;cursor:pointer;text-decoration:underline;color:var(--text3)" onclick="showLicenceModal()">
+        <div id="licence-key-display" style="display:none;margin-top:4px;cursor:pointer;text-decoration:underline;color:var(--text3)" onclick="showLicenceModal()">
           Licence: <span id="licence-key-short">—</span>
         </div>
       </div>
@@ -830,11 +830,10 @@
               </div>
             </div>
 
-            <!-- Year selector -->
-            <div style="display:flex;align-items:center;gap:12px;margin-bottom:16px">
+            <!-- Monthly expenses header — tied to company fiscal year -->
+            <div style="display:flex;align-items:center;gap:12px;margin-bottom:16px;flex-wrap:wrap">
               <div class="card-title" style="margin:0">Monthly Expenses</div>
-              <select class="filter-input" id="ho-year" onchange="hoLoad()" style="font-size:12px;width:100px">
-              </select>
+              <span id="ho-fy-label" style="font-size:12px;font-weight:500;color:var(--accent)"></span>
               <span style="font-size:11px;color:var(--text3)">Enter totals including HST</span>
             </div>
 
@@ -844,18 +843,18 @@
                 <thead>
                   <tr>
                     <th style="text-align:left;font-size:11px;font-weight:500;color:#fff;background:#1a1917;padding:10px 12px;white-space:nowrap;position:sticky;left:0;z-index:2;min-width:130px">Expenses</th>
-                    <th style="text-align:right;font-size:11px;font-weight:500;color:#fff;background:#1a1917;padding:10px 10px;white-space:nowrap">Jan</th>
-                    <th style="text-align:right;font-size:11px;font-weight:500;color:#fff;background:#1a1917;padding:10px 10px;white-space:nowrap">Feb</th>
-                    <th style="text-align:right;font-size:11px;font-weight:500;color:#fff;background:#1a1917;padding:10px 10px;white-space:nowrap">Mar</th>
-                    <th style="text-align:right;font-size:11px;font-weight:500;color:#fff;background:#1a1917;padding:10px 10px;white-space:nowrap">Apr</th>
-                    <th style="text-align:right;font-size:11px;font-weight:500;color:#fff;background:#1a1917;padding:10px 10px;white-space:nowrap">May</th>
-                    <th style="text-align:right;font-size:11px;font-weight:500;color:#fff;background:#1a1917;padding:10px 10px;white-space:nowrap">Jun</th>
-                    <th style="text-align:right;font-size:11px;font-weight:500;color:#fff;background:#1a1917;padding:10px 10px;white-space:nowrap">Jul</th>
-                    <th style="text-align:right;font-size:11px;font-weight:500;color:#fff;background:#1a1917;padding:10px 10px;white-space:nowrap">Aug</th>
-                    <th style="text-align:right;font-size:11px;font-weight:500;color:#fff;background:#1a1917;padding:10px 10px;white-space:nowrap">Sep</th>
-                    <th style="text-align:right;font-size:11px;font-weight:500;color:#fff;background:#1a1917;padding:10px 10px;white-space:nowrap">Oct</th>
-                    <th style="text-align:right;font-size:11px;font-weight:500;color:#fff;background:#1a1917;padding:10px 10px;white-space:nowrap">Nov</th>
-                    <th style="text-align:right;font-size:11px;font-weight:500;color:#fff;background:#1a1917;padding:10px 10px;white-space:nowrap">Dec</th>
+                    <th id="ho-th-0" style="text-align:right;font-size:11px;font-weight:500;color:#fff;background:#1a1917;padding:10px 10px;white-space:nowrap">Jan</th>
+                    <th id="ho-th-1" style="text-align:right;font-size:11px;font-weight:500;color:#fff;background:#1a1917;padding:10px 10px;white-space:nowrap">Feb</th>
+                    <th id="ho-th-2" style="text-align:right;font-size:11px;font-weight:500;color:#fff;background:#1a1917;padding:10px 10px;white-space:nowrap">Mar</th>
+                    <th id="ho-th-3" style="text-align:right;font-size:11px;font-weight:500;color:#fff;background:#1a1917;padding:10px 10px;white-space:nowrap">Apr</th>
+                    <th id="ho-th-4" style="text-align:right;font-size:11px;font-weight:500;color:#fff;background:#1a1917;padding:10px 10px;white-space:nowrap">May</th>
+                    <th id="ho-th-5" style="text-align:right;font-size:11px;font-weight:500;color:#fff;background:#1a1917;padding:10px 10px;white-space:nowrap">Jun</th>
+                    <th id="ho-th-6" style="text-align:right;font-size:11px;font-weight:500;color:#fff;background:#1a1917;padding:10px 10px;white-space:nowrap">Jul</th>
+                    <th id="ho-th-7" style="text-align:right;font-size:11px;font-weight:500;color:#fff;background:#1a1917;padding:10px 10px;white-space:nowrap">Aug</th>
+                    <th id="ho-th-8" style="text-align:right;font-size:11px;font-weight:500;color:#fff;background:#1a1917;padding:10px 10px;white-space:nowrap">Sep</th>
+                    <th id="ho-th-9" style="text-align:right;font-size:11px;font-weight:500;color:#fff;background:#1a1917;padding:10px 10px;white-space:nowrap">Oct</th>
+                    <th id="ho-th-10" style="text-align:right;font-size:11px;font-weight:500;color:#fff;background:#1a1917;padding:10px 10px;white-space:nowrap">Nov</th>
+                    <th id="ho-th-11" style="text-align:right;font-size:11px;font-weight:500;color:#fff;background:#1a1917;padding:10px 10px;white-space:nowrap">Dec</th>
                     <th style="text-align:right;font-size:11px;font-weight:500;color:#fff;background:#1a1917;padding:10px 12px;white-space:nowrap">Total</th>
                     <th style="text-align:right;font-size:11px;font-weight:500;color:#fff;background:#1a1917;padding:10px 12px;white-space:nowrap">Business Use</th>
                     <th style="text-align:right;font-size:11px;font-weight:500;color:#fff;background:#1a1917;padding:10px 12px;white-space:nowrap">HST</th>
@@ -6039,16 +6038,93 @@ function getShLedgerEntries() {
 // HOME OFFICE EXPENSES
 // ═══════════════════════════════════════════════
 const HO_ROWS = [
-  { key:'heat',      label:'Heat',              hst: false },
-  { key:'electric',  label:'Electricity',       hst: false },
+  { key:'heat',      label:'Heat',              hst: true  },
+  { key:'electric',  label:'Electricity',       hst: true  },
   { key:'insurance', label:'Insurance',         hst: false },
   { key:'maintain',  label:'Maintenance',       hst: true  },
   { key:'mortgage',  label:'Mortgage interest', hst: false },
   { key:'rent',      label:'Rent',              hst: false },
-  { key:'water',     label:'Water',             hst: false },
+  { key:'water',     label:'Water',             hst: true  },
   { key:'other',     label:'Other expenses',    hst: true  },
 ];
 const HO_MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+
+// Cosmetic only: relabel the home-office month column headers in fiscal-year
+// order (e.g. Mar'25 ... Feb'26), starting from the fiscal start month.
+// Data slots (index 0=Jan ... 11=Dec) and all calculations are UNCHANGED —
+// this purely changes the displayed header text.
+// Returns 12 column labels where position 0 is the FIRST month of the fiscal
+// year, position 1 the second, etc. (fiscal-period positions, not calendar
+// months). Labels read e.g. Mar'25, Apr'25 ... Feb'26 in chronological order.
+// The data slots are treated as fiscal positions 1..12, so labels and data
+// always stay aligned. If no fiscal year is set, falls back to Jan..Dec.
+function hoFiscalLabels() {
+  try {
+    const fyStart = (typeof companyConfig !== 'undefined' && companyConfig && companyConfig.fyStart)
+      ? companyConfig.fyStart : '';
+    if (!fyStart) return HO_MONTHS.slice(); // no fiscal year → plain Jan..Dec
+
+    const parts = fyStart.split('-');
+    const startYear = parseInt(parts[0], 10);
+    const startMonthIdx = (parseInt(parts[1], 10) - 1) || 0; // 0-based calendar month
+
+    const labels = [];
+    for (let pos = 0; pos < 12; pos++) {
+      const calMonth = (startMonthIdx + pos) % 12;          // which calendar month
+      const yearOffset = Math.floor((startMonthIdx + pos) / 12); // rolls to next year
+      const yr = startYear + yearOffset;
+      labels.push(HO_MONTHS[calMonth] + "'" + String(yr).slice(-2));
+    }
+    return labels;
+  } catch (e) {
+    return HO_MONTHS.slice();
+  }
+}
+
+// Maps a fiscal-position slot (0..11) to its real calendar month/year, based
+// on the fiscal year start. Used when posting home-office entries so each one
+// gets the correct date. The `baseYr` is the year stored as the data key.
+// If no fiscal year is set, slot maps directly to calendar month of baseYr.
+function hoSlotToDate(slot, baseYr) {
+  try {
+    const fyStart = (typeof companyConfig !== 'undefined' && companyConfig && companyConfig.fyStart)
+      ? companyConfig.fyStart : '';
+    if (!fyStart) {
+      return { year: parseInt(baseYr, 10), monthIdx: slot }; // plain calendar
+    }
+    const parts = fyStart.split('-');
+    const startYear = parseInt(parts[0], 10);
+    const startMonthIdx = (parseInt(parts[1], 10) - 1) || 0;
+    const calMonth = (startMonthIdx + slot) % 12;
+    const yearOffset = Math.floor((startMonthIdx + slot) / 12);
+    return { year: startYear + yearOffset, monthIdx: calMonth };
+  } catch (e) {
+    return { year: parseInt(baseYr, 10), monthIdx: slot };
+  }
+}
+
+function hoUpdateHeaderLabels() {
+  try {
+    const labels = hoFiscalLabels();
+    for (let pos = 0; pos < 12; pos++) {
+      const th = document.getElementById('ho-th-' + pos);
+      if (!th) continue;
+      th.textContent = labels[pos];
+    }
+    // Show the fiscal period next to the "Monthly Expenses" title.
+    const lbl = document.getElementById('ho-fy-label');
+    if (lbl) {
+      const c = (typeof companyConfig !== 'undefined') ? companyConfig : null;
+      if (c && c.fyStart && c.fyEnd) {
+        lbl.textContent = 'Fiscal year: ' + c.fyStart + ' to ' + c.fyEnd;
+      } else if (c && c.fyStart) {
+        lbl.textContent = 'Fiscal year starting ' + c.fyStart;
+      } else {
+        lbl.textContent = 'Set your fiscal year in Settings';
+      }
+    }
+  } catch (e) { /* leave default labels on any error */ }
+}
 const HST_RATE = 0.13;
 const fmtN = n => (parseFloat(n)||0).toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g,',');
 
@@ -6090,7 +6166,15 @@ function getHoTotals() {
 }
 
 function hoCurrentYear() {
-  return document.getElementById('ho-year')?.value || String(new Date().getFullYear());
+  // Data key is tied to company settings (fiscal year start), not a dropdown.
+  // Falls back to the current calendar year if no fiscal year is configured.
+  try {
+    if (typeof companyConfig !== 'undefined' && companyConfig && companyConfig.fyStart) {
+      const y = companyConfig.fyStart.split('-')[0];
+      if (y) return String(y);
+    }
+  } catch (e) {}
+  return String(new Date().getFullYear());
 }
 
 function hoEnsureYear(yr) {
@@ -6103,12 +6187,15 @@ function hoEnsureYear(yr) {
 function hoInit() {
   hoLoadData();
 
-  // Populate year selector
+  // Year selector removed — home office is tied to the company fiscal year.
+  // Guarded in case the element no longer exists.
   const sel = document.getElementById('ho-year');
-  const curYear = new Date().getFullYear();
-  sel.innerHTML = '';
-  for(let y = curYear+1; y >= curYear-5; y--) {
-    sel.innerHTML += `<option value="${y}"${y===curYear?' selected':''}>${y}</option>`;
+  if (sel) {
+    const curYear = new Date().getFullYear();
+    sel.innerHTML = '';
+    for(let y = curYear+1; y >= curYear-5; y--) {
+      sel.innerHTML += `<option value="${y}"${y===curYear?' selected':''}>${y}</option>`;
+    }
   }
 
   // Restore sqft
@@ -6122,6 +6209,7 @@ function hoLoad() {
 }
 
 function hoRecalc() {
+  hoUpdateHeaderLabels();
   const total = parseFloat(document.getElementById('ho-total-sqft').value)||0;
   const biz   = parseFloat(document.getElementById('ho-biz-sqft').value)||0;
   const pct   = total > 0 ? biz/total : 0;
@@ -6251,15 +6339,16 @@ function hoPostToShareholder() {
       const bizAmt = amt * pct;
       const hst    = row.hst ? parseFloat((bizAmt - bizAmt/(1+HST_RATE)).toFixed(2)) : 0;
       const net    = bizAmt - hst;
-      const monthName = HO_MONTHS[mi];
+      const slotDate = hoSlotToDate(mi, yr);
+      const monthName = HO_MONTHS[slotDate.monthIdx];
       const id = `ho-${yr}-${row.key}-${mi}`;
       // Skip if already posted
       if(shEntries.find(e=>e.id===id)) return;
       shEntries.push({
         id,
-        date: `${yr}-${String(mi+1).padStart(2,'0')}-01`,
+        date: `${slotDate.year}-${String(slotDate.monthIdx+1).padStart(2,'0')}-01`,
         shareholder: 'Shareholder 1',
-        description: `Home Office — ${row.label} (${monthName} ${yr})`,
+        description: `Home Office — ${row.label} (${monthName} ${slotDate.year})`,
         category: row.key==='mortgage' ? 'Rent & Utilities'
                 : row.key==='rent'     ? 'Rent & Utilities'
                 : row.key==='heat'||row.key==='electric'||row.key==='water' ? 'Rent & Utilities'
@@ -6294,7 +6383,7 @@ function hoExport() {
     ['','Sq ft used for business', biz],
     ['','% used for business', (pct*100).toFixed(1)+'%'],
     [],
-    ['Expenses',...HO_MONTHS,'Total','Business Use','HST','Net']
+    ['Expenses',...hoFiscalLabels(),'Total','Business Use','HST','Net']
   ];
 
   HO_ROWS.forEach(row => {
@@ -9027,10 +9116,9 @@ function updateLicenceDisplay() {
 }
 
 function checkLicenceOnLoad() {
+  // Public free version: licence gate disabled — the app opens for everyone.
+  // Ownership/copyright notice is retained elsewhere in this file.
   updateLicenceDisplay();
-  if(!validateKey(getLicenceKey())) {
-    setTimeout(()=>showLicenceModal(), 400);
-  }
 }
 
 // ═══════════════════════════════════════════════
