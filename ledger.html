@@ -642,7 +642,7 @@
 
           <!-- Opening Balances Quick-Entry Bar -->
           <div id="tx-ob-bar" style="display:flex;align-items:center;gap:10px;padding:7px 16px;background:#f0f9f4;border-bottom:1px solid #b0d9bc;flex-wrap:wrap">
-            <span style="font-size:11px;font-weight:500;color:var(--accent-text);white-space:nowrap">Opening Balances:</span>
+            <span style="font-size:11px;font-weight:500;color:var(--accent-text);white-space:nowrap" title="Shortcut to set bank/card opening balances - same data as the Opening Balances tab">Opening Balances:</span>
             <div id="tx-ob-inputs" style="display:flex;gap:10px;flex-wrap:wrap;flex:1"></div>
             <button class="btn btn-sm" onclick="txSaveOpeningBalances()" style="font-size:11px;background:var(--accent);color:#fff;border-color:var(--accent)">✓ Save</button>
             <a onclick="showView('opening')" style="font-size:11px;color:var(--accent);cursor:pointer;text-decoration:underline">Full Opening TB →</a>
@@ -1132,7 +1132,7 @@
                 <button class="btn btn-sm btn-primary" onclick="coaAddAccount()">+ Add Account</button>
               </div>
               <div style="font-size:12px;color:var(--text2);margin-bottom:12px">
-                Add client-specific accounts here — they appear in all dropdowns (Transactions, Journal Entries, Opening Balances, etc.).
+                Add client-specific accounts here — they appear in all dropdowns (Transactions, Journal Entries, Opening Balances, etc.). This is the <b>same list</b> as the <b>Chart of Accounts</b> tab; edits in either place are the same data.
                 Built-in accounts cannot be removed.
               </div>
               <div id="coa-custom-list"></div>
@@ -1156,9 +1156,10 @@
           <!-- Prior Year Comparatives -->
           <div class="card" style="margin-bottom:20px">
             <div class="card-pad">
-              <div class="card-title">Prior Year Comparatives</div>
+              <div class="card-title">Prior Year Comparatives <span style="font-weight:400;color:var(--text3);font-size:12px">(report comparison only)</span></div>
               <div style="font-size:12px;color:var(--text2);margin-bottom:12px">
-                Enter prior year figures to show a comparison column in P&L and Balance Sheet reports.
+                Last year's totals, shown as a side-by-side column in the P&L and Balance Sheet reports.
+                <b>These are not your opening balances</b> and do not affect this year's ledger — set start-of-year balances in the <b>Opening Balances</b> tab.
               </div>
               <div style="display:grid;grid-template-columns:200px 1fr;gap:16px;margin-bottom:14px">
                 <div>
@@ -1191,9 +1192,9 @@
           <div class="card" style="margin-bottom:16px">
             <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
               <div class="card-title" style="margin:0">How your books flow</div>
-              <button class="btn btn-sm btn-primary" onclick="coaGotoManage()">+ Add / manage accounts</button>
+              <button class="btn btn-sm btn-primary" onclick="coaAddAccount('coa-addform-view')">+ Add Account</button>
             </div>
-            <div style="font-size:12px;color:var(--text3);margin-bottom:14px">Every transaction is tagged with a category. Each category maps to an account in the chart below. Accounts roll up by type into your financial statements.</div>
+            <div style="font-size:12px;color:var(--text3);margin-bottom:14px">Every transaction is tagged with a category. Each category maps to an account in the chart below. Accounts roll up by type into your financial statements. This is the <b>same account list</b> as Settings &rarr; Chart of Accounts.</div>
             <div style="display:flex;align-items:stretch;gap:8px;flex-wrap:wrap;font-size:12px">
               <div style="flex:1;min-width:120px;background:#e8eef8;border-radius:8px;padding:10px 12px">
                 <div style="font-weight:600;margin-bottom:3px">1 · Transaction</div>
@@ -1219,6 +1220,7 @@
           <div class="card">
             <div class="card-title">Chart of Accounts</div>
             <div style="font-size:12px;color:var(--text3);margin-bottom:10px">Built-in accounts plus any you've added. "Balance" reflects current activity in this file.</div>
+            <div id="coa-addform-view"></div>
             <div id="coa-flow-list"></div>
           </div>
         </div>
@@ -1234,7 +1236,7 @@
               <button class="btn btn-primary" onclick="saveOpeningBalances()">✓ Save</button>
               <button class="btn" onclick="clearOpeningBalances()" style="color:var(--danger);border-color:#e8bcb8">⊘ Clear All</button>
             </div>
-            <div style="font-size:11px;color:var(--text3)" id="ob-info">Enter balances from your previous year's closing trial balance.</div>
+            <div style="font-size:11px;color:var(--text3)" id="ob-info">Your start-of-year trial balance (last year's closing). Accounts come from the Chart of Accounts; these figures feed the Trial Balance, Balance Sheet &amp; P&amp;L. Not the same as Settings &rarr; Prior Year Comparatives.</div>
           </div>
 
           <!-- Format hint banner -->
@@ -1618,7 +1620,10 @@ const MASTER_COA = [
 const GIFI_MAP = {};
 MASTER_COA.forEach(a => { if(a.gifi) GIFI_MAP[a.name] = a.gifi; });
 function getGifi(name) {
-  return GIFI_MAP[name] || (companyConfig?.accounts||[]).find(a=>a.name===name)?.gifi || '';
+  let orig = name;
+  const _ren = (typeof companyConfig!=='undefined' && companyConfig && companyConfig.renames) || {};
+  for(const o in _ren) if(_ren[o]===name) { orig=o; break; }
+  return GIFI_MAP[name] || GIFI_MAP[orig] || (companyConfig?.accounts||[]).find(a=>a.name===name)?.gifi || '';
 }
 
 // Build COA lookup from master list
@@ -1655,6 +1660,8 @@ function getEffectiveCOA() {
     };
     existingLow.add(a.name.toLowerCase());
   });
+  const _ren = (companyConfig && companyConfig.renames) || {};
+  Object.keys(_ren).forEach(o => { if(merged[o]) { merged[_ren[o]] = merged[o]; delete merged[o]; } });
   return merged;
 }
 
@@ -1672,10 +1679,11 @@ function getAllAccounts() {
   // New accounts — skip case-insensitive duplicates
   (companyConfig?.accounts||[]).forEach(a => {
     if(existingLow.has(a.name.toLowerCase())) return;
-    all.push({name:a.name, type:a.type||'expense', group:a.group||'Operating Expenses', isCustom:true});
+    all.push({name:a.name, type:a.type||'expense', group:a.group||'Operating Expenses', gifi:a.gifi||'', isCustom:true, id:a.id});
     existingLow.add(a.name.toLowerCase());
   });
-  return all;
+  const _ren = (typeof companyConfig!=='undefined' && companyConfig && companyConfig.renames) || {};
+  return all.map(a => _ren[a.name] ? {...a, name:_ren[a.name], _orig:a.name} : a);
 }
 
 // ── Derived sets (all from COA — no more hardcoded lists) ──
@@ -2327,6 +2335,7 @@ function coaFlowRender() {
           <th style="text-align:left;padding:5px 8px;font-size:10px;color:var(--text3);text-transform:uppercase">GIFI</th>
           <th style="text-align:left;padding:5px 8px;font-size:10px;color:var(--text3);text-transform:uppercase">Source</th>
           <th style="text-align:right;padding:5px 8px;font-size:10px;color:var(--text3);text-transform:uppercase">Balance</th>
+          <th style="width:84px"></th>
         </tr>
         ${accts.map(a=>{
           const gifi = (typeof getGifi==='function' ? getGifi(a.name) : (a.gifi||'')) || '—';
@@ -2337,12 +2346,50 @@ function coaFlowRender() {
             <td style="padding:6px 8px;color:var(--text3);font-family:var(--mono)">${gifi}</td>
             <td style="padding:6px 8px;color:var(--text3)">${a.isCustom?'<span style="color:var(--accent)">custom</span>':'built-in'}</td>
             <td style="padding:6px 8px;text-align:right;${bal?'':'color:var(--text3)'}">${bal?fmt(bal):'—'}</td>
+            <td style="padding:6px 8px;text-align:right;white-space:nowrap">
+              <button onclick="coaRenameAccount('${a.name.replace(/'/g,"\\'")}')" title="Rename everywhere" style="background:none;border:none;cursor:pointer;color:var(--accent);font-size:13px">✎</button>
+              ${a.isCustom?`<button onclick="coaDeleteAccount('${a.id}')" title="Delete custom account" style="background:none;border:none;cursor:pointer;color:var(--danger);font-size:13px;margin-left:8px">✕</button>`:''}
+            </td>
           </tr>`;
         }).join('')}
       </table>
     </div>`;
   }
   el.innerHTML = html || '<div style="color:var(--text3);font-size:12px">No accounts found.</div>';
+}
+
+
+// ——— Rename an account everywhere (COA is the single source of truth) ———
+function coaRenameAccount(displayName) {
+  const nn = (prompt('Rename account "'+displayName+'" to:', displayName)||'').trim();
+  if(!nn || nn===displayName) return;
+  if(getAllAccounts().some(a=>a.name.toLowerCase()===nn.toLowerCase())) { toast('⚠ "'+nn+'" already exists'); return; }
+  let isCustom=false;
+  (companyConfig.accounts||[]).forEach(a=>{ if(a.name===displayName){ a.name=nn; isCustom=true; } });
+  (companyConfig.customLedgers||[]).forEach(l=>{ if(l.name===displayName){ l.name=nn; isCustom=true; } });
+  if(!isCustom){
+    companyConfig.renames = companyConfig.renames||{};
+    let orig=displayName;
+    for(const o in companyConfig.renames) if(companyConfig.renames[o]===displayName) orig=o;
+    if(nn===orig) delete companyConfig.renames[orig]; else companyConfig.renames[orig]=nn;
+  }
+  // Propagate to every stored reference
+  (openingBalances||[]).forEach(ob=>{ if(ob.account===displayName) ob.account=nn; });
+  (transactions||[]).forEach(t=>{ if(t.account===displayName) t.account=nn; if(t.category===displayName) t.category=nn; });
+  (typeof adjustingEntries!=='undefined'?adjustingEntries:[]).forEach(j=>{ (j.lines||[]).forEach(l=>{ if(l.account===displayName) l.account=nn; }); });
+  if(typeof shEntries!=='undefined') shEntries.forEach(e=>{ if(e.category===displayName) e.category=nn; });
+  refreshAccountSets();
+  save(); renderAll();
+  if(typeof coaRender==='function') coaRender();
+  if(typeof coaFlowRender==='function') coaFlowRender();
+  toast('✓ Renamed to "'+nn+'" everywhere');
+}
+// Opening TB: pick an account from the COA (also sets its type)
+function obSetAccount(id, name) {
+  const t = getEffectiveCOA()[name]?.type;
+  openingBalances = openingBalances.map(ob => ob.id===id ? {...ob, account:name, ...(t?{type:t}:{})} : ob);
+  if(typeof updateObTotals==='function') updateObTotals();
+  save(); redrawObTable();
 }
 
 function loadScript(src) {
@@ -4592,9 +4639,10 @@ function redrawObTable() {
   tbody.innerHTML = openingBalances.map(ob=>`
     <tr>
       <td style="padding:6px 16px;border-bottom:1px solid var(--border)">
-        <input class="edit-input" value="${ob.account.replace(/"/g,'&quot;')}"
-          onchange="updateOb('${ob.id}','account',this.value)"
-          style="width:100%;font-size:12px" placeholder="Account name">
+        <select class="edit-input" onchange="obSetAccount('${ob.id}',this.value)" style="width:100%;font-size:12px">
+          ${getAllAccounts().some(a=>a.name===ob.account)?'':`<option selected>${ob.account||''}</option>`}
+          ${getAllAccounts().map(a=>`<option${a.name===ob.account?' selected':''}>${a.name}</option>`).join('')}
+        </select>
       </td>
       <td style="padding:6px 8px;border-bottom:1px solid var(--border)">
         <select class="edit-input" onchange="updateOb('${ob.id}','type',this.value)" style="font-size:12px;width:100%">
@@ -8234,9 +8282,10 @@ function coaRender() {
   </table>`;
 }
 
-function coaAddAccount() {
+function coaAddAccount(targetId) {
   // Inline form
-  const el = document.getElementById('coa-custom-list');
+  const el = document.getElementById(targetId || 'coa-custom-list');
+  if(!el) return;
   const types = ['asset','liability','equity','revenue','expense'];
   const groups = ['Current Assets','Long-term Assets','Fixed Assets','Revenue','Cost of Sales','Operating Expenses','Current Liabilities','Equity'];
   const formId = 'coa-add-form';
@@ -8299,7 +8348,8 @@ function coaSaveNew() {
   companyConfig.accounts.push({id:`acct-${Date.now()}`, name, type, group, gifi});
   refreshAccountSets();
   save();
-  coaRender();
+  if(typeof coaRender==='function') coaRender();
+  if(typeof coaFlowRender==='function') coaFlowRender();
   document.getElementById('coa-add-form')?.remove();
   toast(`✓ Account "${name}" added`);
 }
@@ -8309,7 +8359,8 @@ function coaDeleteAccount(id) {
   companyConfig.accounts = (companyConfig.accounts||[]).filter(a=>a.id!==id);
   refreshAccountSets();
   save();
-  coaRender();
+  if(typeof coaRender==='function') coaRender();
+  if(typeof coaFlowRender==='function') coaFlowRender();
   toast('Account removed');
 }
 
