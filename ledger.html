@@ -519,6 +519,9 @@
       <button class="nav-item" onclick="showView('reports')">
         <span class="nav-icon">◎</span> Reports
       </button>
+      <button class="nav-item" onclick="showView('coa')">
+        <span class="nav-icon">▤</span> Chart of Accounts
+      </button>
       <div class="nav-section">Actions</div>
       <button class="nav-item" onclick="document.getElementById('file-input').click()">
         <span class="nav-icon">↑</span> Import File
@@ -1183,6 +1186,44 @@
       </div>
 
       <!-- OPENING BALANCES -->
+      <div id="view-coa" class="view">
+        <div style="max-width:1000px">
+          <div class="card" style="margin-bottom:16px">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+              <div class="card-title" style="margin:0">How your books flow</div>
+              <button class="btn btn-sm btn-primary" onclick="coaGotoManage()">+ Add / manage accounts</button>
+            </div>
+            <div style="font-size:12px;color:var(--text3);margin-bottom:14px">Every transaction is tagged with a category. Each category maps to an account in the chart below. Accounts roll up by type into your financial statements.</div>
+            <div style="display:flex;align-items:stretch;gap:8px;flex-wrap:wrap;font-size:12px">
+              <div style="flex:1;min-width:120px;background:#e8eef8;border-radius:8px;padding:10px 12px">
+                <div style="font-weight:600;margin-bottom:3px">1 · Transaction</div>
+                <div style="color:var(--text2)">A line from a bank/credit-card import or manual entry.</div>
+              </div>
+              <div style="display:flex;align-items:center;color:var(--text3);font-size:18px">→</div>
+              <div style="flex:1;min-width:120px;background:#f3e8f8;border-radius:8px;padding:10px 12px">
+                <div style="font-weight:600;margin-bottom:3px">2 · Category</div>
+                <div style="color:var(--text2)">e.g. "Service Revenue", "Bank Charges". Set manually or by AI.</div>
+              </div>
+              <div style="display:flex;align-items:center;color:var(--text3);font-size:18px">→</div>
+              <div style="flex:1;min-width:120px;background:#fef3d0;border-radius:8px;padding:10px 12px">
+                <div style="font-weight:600;margin-bottom:3px">3 · Account</div>
+                <div style="color:var(--text2)">Each category is an account with a type &amp; normal balance.</div>
+              </div>
+              <div style="display:flex;align-items:center;color:var(--text3);font-size:18px">→</div>
+              <div style="flex:1;min-width:120px;background:#e8f4e8;border-radius:8px;padding:10px 12px">
+                <div style="font-weight:600;margin-bottom:3px">4 · Statement</div>
+                <div style="color:var(--text2)">Revenue &amp; Expense → <b>Profit &amp; Loss</b>. Asset, Liability &amp; Equity → <b>Balance Sheet</b>.</div>
+              </div>
+            </div>
+          </div>
+          <div class="card">
+            <div class="card-title">Chart of Accounts</div>
+            <div style="font-size:12px;color:var(--text3);margin-bottom:10px">Built-in accounts plus any you've added. "Balance" reflects current activity in this file.</div>
+            <div id="coa-flow-list"></div>
+          </div>
+        </div>
+      </div>
+
       <div id="view-opening" class="view">
         <div class="card">
           <!-- Toolbar -->
@@ -1990,55 +2031,318 @@ async function parseXlsx(file) {
   return normaliseRows(raw);
 }
 
-// ——— PDF Parse (PDF.js) — extract text then heuristic parse ———
+// --- PDF Parse (PDF.js) - column-aware bank/credit-card statement parser ---
+// Reconstructs lines with x-coordinates, detects the activity table and its
+// column anchors (debit / credit / balance / amount) from the header row, then
+// classifies each amount by the column it sits under (within a tolerance) so
+// signs are correct across bank AND credit-card layouts. Handles dateless rows
+// (year inferred from the statement period), multi-line descriptions, two-date
+// credit-card rows, right-hand summary boxes that bleed into rows, and noise.
 async function parsePdf(file) {
   await loadScript('https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js');
   pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
   const buf = await file.arrayBuffer();
   const pdf = await pdfjsLib.getDocument({data: buf}).promise;
+  const pages = [];
   let fullText = '';
   for(let p=1; p<=pdf.numPages; p++) {
     const page = await pdf.getPage(p);
     const content = await page.getTextContent();
-    // Group items by Y position to reconstruct rows
     const byY = {};
-    content.items.forEach(item => {
-      const y = Math.round(item.transform[5]);
-      if(!byY[y]) byY[y]=[];
-      byY[y].push({x: item.transform[4], text: item.str});
+    content.items.forEach(it => {
+      const s = it.str;
+      if(!s || !s.trim()) return;
+      const x0 = it.transform[4];
+      const w  = it.width || 0;
+      const y  = Math.round(it.transform[5]);
+      (byY[y] = byY[y] || []).push({ x0, x1: x0 + w, text: s });
     });
-    Object.keys(byY).sort((a,b)=>b-a).forEach(y => {
-      const line = byY[y].sort((a,b)=>a.x-b.x).map(i=>i.text).join(' ').trim();
-      if(line) fullText += line + '\n';
+    const lines = Object.keys(byY).map(Number).sort((a,b)=>b-a).map(y => {
+      const items = byY[y].sort((a,b)=>a.x0-b.x0);
+      return { y, items, text: items.map(i=>i.text).join(' ').replace(/\s+/g,' ').trim() };
     });
+    pages.push(lines);
+    fullText += lines.map(l=>l.text).join('\n') + '\n';
   }
-  return parsePdfText(fullText);
+  return parseBankStatement(pages, fullText, guessAccount(file.name));
 }
 
-function parsePdfText(text) {
-  const lines = text.split('\n').map(l=>l.trim()).filter(Boolean);
-  const results = [];
-  // Date patterns: 2024-01-15, 01/15/2024, Jan 15 2024, 15 Jan 2024, etc.
-  const dateRe = /(\d{4}[-\/]\d{1,2}[-\/]\d{1,2}|\d{1,2}[-\/]\d{1,2}[-\/]\d{2,4}|(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\.?\s+\d{1,2},?\s+\d{2,4}|\d{1,2}\s+(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\.?\s+\d{2,4})/i;
-  // Amount pattern: optional $ or -, digits with commas, decimal
-  const amtRe = /[-−]?\$?\s*[\d,]+\.\d{2}/g;
+const PDF_MONTHS = {jan:1,feb:2,mar:3,apr:4,may:5,jun:6,jul:7,aug:8,sep:9,oct:10,nov:11,dec:12};
+const PDF_AMT_RE = /^[-(]?\$?[\d,]+\.\d{2}\)?(?:\s*(?:CR|DR))?$/i;
 
-  lines.forEach((line, idx) => {
-    const dateMatch = line.match(dateRe);
-    if(!dateMatch) return;
-    const amounts = [...line.matchAll(amtRe)].map(m => parseFloat(m[0].replace(/[$,\s]/g,'').replace('−','-')));
-    if(!amounts.length) return;
-    // Use last amount on line (most bank PDFs put balance last, transaction amount second-to-last)
-    let amt = amounts.length >= 2 ? amounts[amounts.length-2] : amounts[amounts.length-1];
-    // Description: everything between date and first amount
-    let desc = line.slice(dateMatch.index + dateMatch[0].length);
-    desc = desc.replace(amtRe,'').replace(/\s+/g,' ').trim();
-    if(!desc) desc = lines[idx-1]||'';
-    results.push({ date: dateMatch[0], description: desc, amount: amt });
+// Some bank PDFs render bold dates by double-printing each glyph ("30Jan" -> "3300JJaann").
+// Collapse only fully-doubled strings so legit values like "11 Jan" or "1,000.00" are untouched.
+function pdfDedouble(s) {
+  if(s.length>=4 && s.length%2===0) {
+    let doubled=true;
+    for(let i=0;i<s.length;i+=2){ if(s[i]!==s[i+1]){ doubled=false; break; } }
+    if(doubled){ let o=''; for(let i=0;i<s.length;i+=2) o+=s[i]; return o; }
+  }
+  return s;
+}
+function pdfYearFor(mo, y, P) {
+  if(y){ y=parseInt(y,10); return y<100 ? y+2000 : y; }
+  const [sm,sy,em,ey] = P;
+  if(sy && ey && sy!==ey) return mo>=sm ? sy : ey;   // statement spans a year boundary
+  return ey || sy || new Date().getFullYear();
+}
+// P = [startMonth, startYear, endMonth, endYear] from the statement period.
+// Patterns are anchored to the start of the candidate so a trailing token
+// (e.g. a credit-card posting date in "DEC28 DEC30") can't be misread as a year.
+function pdfParseDate(s, P) {
+  s = pdfDedouble(s.trim()); const sl = s.toLowerCase();
+  let m = s.match(/^(\d{4})[-\/](\d{1,2})[-\/](\d{1,2})/);
+  if(m) return m[1]+'-'+String(+m[2]).padStart(2,'0')+'-'+String(+m[3]).padStart(2,'0');
+  m = sl.match(/^(\d{1,2})\s*([a-z]{3,9})\.?\s*(\d{2,4})?/);          // 15 Jan [2025] / 15Jan / 31Dec
+  if(m && PDF_MONTHS[m[2].slice(0,3)]){ const mo=PDF_MONTHS[m[2].slice(0,3)]; return pdfYearFor(mo,m[3],P)+'-'+String(mo).padStart(2,'0')+'-'+String(+m[1]).padStart(2,'0'); }
+  m = sl.match(/^([a-z]{3,9})\.?\s*(\d{1,2}),?\s*(\d{2,4})?/);        // Jan 15[, 2025] / Jan15 / DEC28
+  if(m && PDF_MONTHS[m[1].slice(0,3)]){ const mo=PDF_MONTHS[m[1].slice(0,3)]; return pdfYearFor(mo,m[3],P)+'-'+String(mo).padStart(2,'0')+'-'+String(+m[2]).padStart(2,'0'); }
+  m = s.match(/^(\d{1,2})[-\/](\d{1,2})[-\/](\d{2,4})/);             // 01/15/2025 or 15/01/2025
+  if(m){ let d=+m[1],mo=+m[2],y=+m[3]; if(mo>12){ const t=d; d=mo; mo=t; } y=y<100?y+2000:y; return y+'-'+String(mo).padStart(2,'0')+'-'+String(d).padStart(2,'0'); }
+  return null;
+}
+function pdfToAmt(t) {
+  t = t.trim();
+  const neg = /dr$/i.test(t) || t.startsWith('-') || t.startsWith('(');
+  const v = parseFloat(t.replace(/[^\d.]/g,'')) || 0;
+  return neg ? -v : v;
+}
+
+function parseBankStatement(pages, fullText, account) {
+  const isCC = typeof CREDIT_CARD_NAMES!=='undefined' && CREDIT_CARD_NAMES.has(account);
+
+  // 1. Statement period -> [startMonth, startYear, endMonth, endYear].
+  // Anchor the month to real month names so this works even when the PDF extracts
+  // with no spaces between words (e.g. "STATEMENTFROMDEC13,2024TOJAN132025").
+  let P = [1, new Date().getFullYear(), 12, new Date().getFullYear()];
+  const MON = '(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*';
+  const rng = fullText.match(new RegExp('('+MON+')\\.?\\s*(\\d{1,2}),?\\s*(\\d{4})\\s*(?:to|through|[-–—])\\s*('+MON+')\\.?\\s*(\\d{1,2}),?\\s*(\\d{4})','i'));
+  if(rng) {
+    P = [PDF_MONTHS[rng[1].toLowerCase().slice(0,3)], +rng[3], PDF_MONTHS[rng[4].toLowerCase().slice(0,3)], +rng[6]];
+  } else {
+    const yrs = (fullText.match(/(?:19|20)\d{2}/g)||[]).map(Number);
+    if(yrs.length) P = [1, Math.min.apply(null,yrs), 12, Math.max.apply(null,yrs)];
+  }
+
+  const CLOSE = /closingbalance|accountfees|endofstatement|newbalance|subtotalof|totalfor/;
+  const SKIP  = /^\d+of\d+$|^page\d|^businessaccountstatement|^accountnumber|^accountactivity|^date$|statementperiod|^www\.|howtoreachus|^openingbalance|^previousstatementbalance|balanceforward|broughtforward|^total(deposits|cheques|debits|credits|withdrawals|fees|charges|payments)/;
+  const isHeader = raw => {
+    const l = raw.toLowerCase();
+    if(/expiry|rate ?\(%\)|remaining ?balance|interest rate/.test(l)) return false; // skip rate charts
+    const hasCol = /(balance|amount|debit|credit|withdraw|deposit)/.test(l);
+    return hasCol && (/\bdate\b/.test(l) || /descriptio?n/.test(l));
+  };
+
+  const txns = []; let pending=null, inTable=false, anchors={}, lastDate=null;
+  let tol=45, boundary=Infinity, singleAmtCol=false;
+  const setAnchors = items => {
+    anchors = {};
+    items.forEach(it => {
+      const t = it.text.toLowerCase();
+      if(/cheque|debit|withdraw/.test(t))      anchors.debit   = it.x1;
+      else if(/deposit|credit/.test(t))         anchors.credit  = it.x1;
+      else if(/balance/.test(t))                anchors.balance = it.x1;
+      else if(/amount/.test(t))                 anchors.amount  = it.x1;
+    });
+    const xs = Object.values(anchors).sort((a,b)=>a-b);
+    let gap = Infinity; for(let i=1;i<xs.length;i++) gap = Math.min(gap, xs[i]-xs[i-1]);
+    tol = isFinite(gap) ? Math.max(25, Math.min(60, gap*0.45)) : 45;
+    boundary = (xs.length ? Math.max.apply(null,xs) : 0) + tol*0.6;   // crop right-hand summary boxes
+    singleAmtCol = ('amount' in anchors) && !('debit' in anchors) && !('credit' in anchors);
+  };
+  const classify = x1 => {
+    let best=null, bd=1e9;
+    for(const k in anchors){ const d=Math.abs(x1-anchors[k]); if(d<bd){ bd=d; best=k; } }
+    return bd<=tol ? best : null;          // reject amounts not under any column
+  };
+  const flush = () => {
+    if(pending && (pending.amount!==0 || pending.desc.trim())) {
+      pending.desc = pending.desc.replace(/\s+/g,' ').trim();
+      txns.push(pending);
+    }
+    pending = null;
+  };
+
+  for(const lines of pages) {
+    for(const ln of lines) {
+      if(isHeader(ln.text) && /balance|amount/i.test(ln.text)) { inTable=true; setAnchors(ln.items); continue; }
+      if(!inTable) continue;
+
+      const items = ln.items.filter(i => i.x0 <= boundary);   // crop right-hand summary boxes
+      const raw = items.map(i=>i.text).join(' ').replace(/\s+/g,' ').trim();
+      const ds  = raw.replace(/\s+/g,'').toLowerCase();
+      if(!raw) continue;
+      if(CLOSE.test(ds)) { flush(); inTable=false; continue; }
+      if(SKIP.test(ds)) continue;
+
+      const amts   = items.filter(i => PDF_AMT_RE.test(i.text));
+      const nonamt = items.filter(i => !PDF_AMT_RE.test(i.text));
+
+      let txAmt=null, fromAmt=false;
+      for(const w of amts) {
+        const c = classify(w.x1);
+        if(!c || c==='balance') continue;
+        let v = pdfToAmt(w.text);
+        if(c==='debit')  v = -Math.abs(v);
+        else if(c==='credit') v = Math.abs(v);
+        if(txAmt===null){ txAmt=v; fromAmt=(c==='amount'); }
+      }
+
+      const ded  = nonamt.map(w => pdfDedouble(w.text));
+      const dt   = pdfParseDate(ded.slice(0,3).join(' '), P);
+      let desc   = ded.join(' ');
+
+      if(dt) {
+        let rest = ded;
+        for(const n of [1,2,3]) { if(pdfParseDate(ded.slice(0,n).join(' '), P)===dt){ rest=ded.slice(n); break; } } // strip txn date
+        for(const n of [1,2]) { if(pdfParseDate(rest.slice(0,n).join(' '), P)){ rest=rest.slice(n); break; } }       // strip a 2nd (posting) date
+        desc = rest.join(' ').trim();
+        flush(); lastDate = dt;
+        pending = { date:dt, desc, amount:txAmt||0, hasAmt:txAmt!==null, fromAmt };
+      } else if(txAmt!==null) {
+        if(pending && !pending.hasAmt) {
+          pending.desc += ' ' + desc; pending.amount = txAmt; pending.hasAmt = true; pending.fromAmt = fromAmt;
+        } else if(lastDate) {
+          flush(); pending = { date:lastDate, desc, amount:txAmt, hasAmt:true, fromAmt };
+        }
+      } else if(pending && desc.trim() && !/^\d{6,}$/.test(ds)) {
+        pending.desc += ' ' + desc;
+      }
+    }
+  }
+  flush();
+
+  // Reconciliation summary — lets the UI verify a parse before committing.
+  const dsAll = fullText.replace(/\s+/g,'').toLowerCase();
+  const grab = re => { const m = dsAll.match(re); return m ? parseFloat(m[1].replace(/,/g,'')) : null; };
+  const opening = grab(/(?:openingbalance|previousstatementbalance|previousbalance)\$?.{0,40}?\$?([\d,]+\.\d{2})/);
+  const closing = grab(/(?:closingbalance|newbalance|endingbalance)\$?.{0,60}?\$?([\d,]+\.\d{2})/);
+  const nativeNet = txns.reduce((s,t)=>s+(t.amount||0),0);
+  const reconciles = (opening!=null && closing!=null) ? Math.abs(opening + nativeNet - closing) < 0.02 : null;
+
+  const result = txns.filter(t => t.amount!==0 || t.desc).map((t,i) => {
+    // Credit cards: statements show purchases (+) and payments (-); the ledger
+    // stores the opposite (mirrors the Excel import mapper), so flip amount-column values.
+    let amt = (isCC && t.fromAmt) ? -t.amount : t.amount;
+    return {
+      id:'tx-'+Date.now()+'-'+i+'-'+Math.random().toString(36).slice(2,5),
+      date:t.date, description:t.desc, amount:parseFloat(amt.toFixed(2)),
+      category:'Uncategorized', account, notes:'', reconciled:false,
+      hstRate:13, hstAmount:0, hstType:'none'
+    };
   });
+  result.summary = { opening, closing, nativeNet, reconciles, count: result.length, account, isCC };
+  return result;
+}
 
-  // Fallback: if no results, try AI-assisted parsing via the API
-  return normaliseRows(results.length ? results : []);
+
+// ——— PDF import preview + reconciliation gate ———
+let pendingPdfRows = [], pendingPdfSummary = null;
+function showPdfPreview(rows, account) {
+  pendingPdfSummary = rows.summary || null;
+  pendingPdfRows = rows.map(t => ({...t, account}));
+  const sel = document.getElementById('pdf-preview-account');
+  if(sel) sel.innerHTML = ACCOUNTS.map(a=>`<option${a===account?' selected':''}>${a}</option>`).join('');
+  renderPdfPreview();
+  document.getElementById('pdf-preview-modal').style.display = 'flex';
+}
+function pdfPreviewAccountChange(acc) {
+  pendingPdfRows = pendingPdfRows.map(t => ({...t, account:acc}));
+  renderPdfPreview();
+}
+function renderPdfPreview() {
+  const s = pendingPdfSummary, rows = pendingPdfRows;
+  const banner = document.getElementById('pdf-preview-banner');
+  if(s && s.reconciles===true) {
+    banner.style.background='#e8f4e8'; banner.style.color='#1d6b3a';
+    banner.innerHTML = `✓ <b>Reconciled.</b> Opening ${fmt(s.opening)} + net change ${fmt(s.nativeNet)} = closing ${fmt(s.closing)} — matches the statement.`;
+  } else if(s && s.reconciles===false) {
+    banner.style.background='#fdecea'; banner.style.color='#b3261e';
+    banner.innerHTML = `⚠ <b>Does not reconcile.</b> Opening ${fmt(s.opening)} + net ${fmt(s.nativeNet)} = ${fmt((s.opening||0)+(s.nativeNet||0))}, but the statement's closing balance is ${fmt(s.closing)}. Review the rows before importing.`;
+  } else {
+    banner.style.background='#fef3d0'; banner.style.color='#8a6d1a';
+    banner.innerHTML = `Opening/closing balance not detected on this statement — ${rows.length} rows parsed. Please eyeball the amounts before importing.`;
+  }
+  document.getElementById('pdf-preview-tbody').innerHTML = rows.map(t=>`<tr>
+    <td style="padding:4px 8px;white-space:nowrap;color:var(--text2)">${fmtDate(t.date)}</td>
+    <td style="padding:4px 8px">${t.description||'<em style="color:var(--text3)">No description</em>'}</td>
+    <td style="padding:4px 8px;text-align:right" class="${t.amount<0?'tx-amount-neg':'tx-amount-pos'}">${fmt(t.amount)}</td></tr>`).join('');
+  document.getElementById('pdf-preview-count').textContent = `${rows.length} transactions`;
+}
+function closePdfPreview() {
+  document.getElementById('pdf-preview-modal').style.display='none';
+  pendingPdfRows=[]; pendingPdfSummary=null;
+}
+function pdfConfirmImport() {
+  const acc = document.getElementById('pdf-preview-account').value;
+  const rows = pendingPdfRows.map(t => ({...t, account:acc}));
+  const ids = new Set(transactions.map(t=>t.date+'|'+t.description+'|'+t.amount));
+  const fresh = rows.filter(t=>!ids.has(t.date+'|'+t.description+'|'+t.amount));
+  transactions = [...transactions, ...fresh];
+  save(); renderAll(); closePdfPreview();
+  const dup = rows.length - fresh.length;
+  toast(`✓ Imported ${fresh.length} transactions${dup>0?` · ${dup} duplicates skipped`:''}`);
+  if(fresh.length) showView('transactions');
+}
+
+
+// ——— Chart of Accounts: visibility + flow view ———
+function coaGotoManage() {
+  showView('settings');
+  setTimeout(()=>{ const c=document.getElementById('coa-custom-list'); if(c) c.scrollIntoView({behavior:'smooth',block:'center'}); coaAddAccount(); }, 60);
+}
+function coaFlowRender() {
+  const el = document.getElementById('coa-flow-list');
+  if(!el) return;
+  const all = getAllAccounts();
+  const eff = getEffectiveCOA();
+  let ledger = {};
+  try { ledger = buildFullLedger(); } catch(e) { ledger = {}; }
+  const balOf = name => {
+    const la = ledger[name]; if(!la) return 0;
+    const creditNormal = la.type==='liability' || la.type==='equity' || la.type==='revenue' || CREDIT_CARD_NAMES.has(name);
+    return creditNormal ? (la.clCr - la.clDr) : (la.clDr - la.clCr);
+  };
+  const TYPES = [
+    ['asset','Assets','Balance Sheet','Debit'],
+    ['liability','Liabilities','Balance Sheet','Credit'],
+    ['equity','Equity','Balance Sheet','Credit'],
+    ['revenue','Revenue','Profit & Loss','Credit'],
+    ['expense','Expenses','Profit & Loss','Debit'],
+  ];
+  const typeColors = {asset:'var(--accent)',liability:'var(--danger)',equity:'var(--info)',revenue:'#22a37c',expense:'var(--text2)'};
+  let html = '';
+  for(const [type,label,stmt,normal] of TYPES) {
+    const accts = all.filter(a => (a.type|| (eff[a.name]&&eff[a.name].type)) === type);
+    if(!accts.length) continue;
+    html += `<div style="margin-bottom:14px">
+      <div style="display:flex;align-items:baseline;gap:8px;margin-bottom:4px">
+        <span style="font-weight:600;color:${typeColors[type]}">${label}</span>
+        <span style="font-size:11px;color:var(--text3)">normal balance: ${normal} · appears on ${stmt}</span>
+      </div>
+      <table style="width:100%;border-collapse:collapse;font-size:12px">
+        <tr style="background:var(--surface2)">
+          <th style="text-align:left;padding:5px 8px;font-size:10px;color:var(--text3);text-transform:uppercase">Account</th>
+          <th style="text-align:left;padding:5px 8px;font-size:10px;color:var(--text3);text-transform:uppercase">Group</th>
+          <th style="text-align:left;padding:5px 8px;font-size:10px;color:var(--text3);text-transform:uppercase">GIFI</th>
+          <th style="text-align:left;padding:5px 8px;font-size:10px;color:var(--text3);text-transform:uppercase">Source</th>
+          <th style="text-align:right;padding:5px 8px;font-size:10px;color:var(--text3);text-transform:uppercase">Balance</th>
+        </tr>
+        ${accts.map(a=>{
+          const gifi = (typeof getGifi==='function' ? getGifi(a.name) : (a.gifi||'')) || '—';
+          const bal = balOf(a.name);
+          return `<tr style="border-bottom:1px solid var(--border)">
+            <td style="padding:6px 8px;font-weight:500">${a.name}${a.isBankAccount?' <span style="font-size:10px;color:var(--text3)">(bank/card)</span>':''}</td>
+            <td style="padding:6px 8px;color:var(--text3)">${a.group||'—'}</td>
+            <td style="padding:6px 8px;color:var(--text3);font-family:var(--mono)">${gifi}</td>
+            <td style="padding:6px 8px;color:var(--text3)">${a.isCustom?'<span style="color:var(--accent)">custom</span>':'built-in'}</td>
+            <td style="padding:6px 8px;text-align:right;${bal?'':'color:var(--text3)'}">${bal?fmt(bal):'—'}</td>
+          </tr>`;
+        }).join('')}
+      </table>
+    </div>`;
+  }
+  el.innerHTML = html || '<div style="color:var(--text3);font-size:12px">No accounts found.</div>';
 }
 
 function loadScript(src) {
@@ -2080,14 +2384,8 @@ document.getElementById('file-input').addEventListener('change', async e => {
       setLoading('Extracting from PDF…');
       const parsed = await parsePdf(file);
       setLoading('');
-      // PDF already normalised — skip mapper
-      const acc = guessAccount(file.name);
-      const ids = new Set(transactions.map(t=>t.description+t.date+t.amount));
-      const fresh = parsed.map(t=>({...t,account:acc})).filter(t=>!ids.has(t.description+t.date+t.amount));
-      transactions = [...transactions,...fresh];
-      save(); renderAll();
-      toast(fresh.length ? `Imported ${fresh.length} transactions from PDF` : 'No new transactions found');
-      if(fresh.length) showView('transactions');
+      if(!parsed.length) { toast('No transactions found in PDF'); e.target.value=''; return; }
+      showPdfPreview(parsed, guessAccount(file.name));   // review + reconcile before committing
       e.target.value=''; return;
     } else {
       toast('Unsupported file. Use CSV, Excel, or PDF.'); setLoading(''); return;
@@ -4921,7 +5219,7 @@ function showView(v) {
     assets:'Fixed Assets / CCA', opening:'Opening Trial Balance',
     aje:'Journal Entries',
     recon:'Bank Reconciliation',
-    settings:'Company Settings', reports:'Reports'
+    settings:'Company Settings', reports:'Reports', coa:'Chart of Accounts'
   };
   document.getElementById('page-title').textContent = titles[v]||v;
 
@@ -4956,8 +5254,13 @@ function showView(v) {
       <button class="btn" onclick="exportAjeCsv()">↓ Export CSV</button>`;
   } else if(v==='recon') {
     ta.innerHTML = '';
+  } else if(v==='transactions') {
+    ta.innerHTML = `
+      <button class="btn" onclick="document.getElementById('file-input').click()">↑ Import File</button>
+      <button class="btn" onclick="showPasteModal()">⎘ Paste from Excel</button>
+      <button class="btn btn-primary" onclick="addManual()">+ Add Entry</button>`;
   } else {
-    // Transactions & default: most-used action up top; the rest live in the sidebar
+    // Other views: most-used action up top; the rest live in the sidebar
     ta.innerHTML = `<button class="btn btn-primary" onclick="addManual()">+ Add Entry</button>`;
   }
 
@@ -4967,6 +5270,7 @@ function showView(v) {
   if(v==='homeoffice')   hoInit();
   if(v==='assets')       renderAssets();
   if(v==='settings')     cfgRender();
+  if(v==='coa')          coaFlowRender();
   if(v==='aje')          renderAJE();
   if(v==='recon')        renderRecon();
   if(v==='transactions') txRenderOpeningBalances(); // only on view switch, not every render
@@ -8846,6 +9150,38 @@ maybeShowWelcome();
 </script>
 
 <!-- Import Column Mapper Modal -->
+<!-- PDF Import Preview Modal -->
+<div id="pdf-preview-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.55);z-index:400;align-items:center;justify-content:center">
+  <div style="background:#fff;border-radius:12px;max-width:780px;width:92%;max-height:88vh;display:flex;flex-direction:column;box-shadow:0 20px 60px rgba(0,0,0,.25)">
+    <div style="padding:16px 20px;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center">
+      <div style="font-family:var(--display);font-size:19px;font-weight:500">Review PDF import</div>
+      <button onclick="closePdfPreview()" style="background:none;border:none;cursor:pointer;font-size:22px;color:var(--text3);line-height:1">×</button>
+    </div>
+    <div style="padding:14px 20px;display:flex;flex-direction:column;gap:10px;overflow:hidden">
+      <div id="pdf-preview-banner" style="padding:9px 12px;border-radius:8px;font-size:13px;line-height:1.4"></div>
+      <div style="display:flex;align-items:center;gap:10px;font-size:13px">
+        <span>Import into account:</span>
+        <select id="pdf-preview-account" onchange="pdfPreviewAccountChange(this.value)" class="edit-input" style="font-size:13px;padding:4px 8px"></select>
+        <span id="pdf-preview-count" style="margin-left:auto;color:var(--text3);font-size:12px"></span>
+      </div>
+      <div style="overflow-y:auto;border:1px solid var(--border);border-radius:8px;max-height:46vh">
+        <table style="width:100%;border-collapse:collapse;font-size:12px">
+          <thead><tr style="background:var(--surface2)">
+            <th style="text-align:left;padding:6px 8px;position:sticky;top:0;background:var(--surface2)">Date</th>
+            <th style="text-align:left;padding:6px 8px;position:sticky;top:0;background:var(--surface2)">Description</th>
+            <th style="text-align:right;padding:6px 8px;position:sticky;top:0;background:var(--surface2)">Amount</th>
+          </tr></thead>
+          <tbody id="pdf-preview-tbody"></tbody>
+        </table>
+      </div>
+    </div>
+    <div style="padding:14px 20px;border-top:1px solid var(--border);display:flex;justify-content:flex-end;gap:8px">
+      <button class="btn" onclick="closePdfPreview()">Cancel</button>
+      <button class="btn btn-primary" onclick="pdfConfirmImport()">✓ Import transactions</button>
+    </div>
+  </div>
+</div>
+
 <div id="import-mapper-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.55);z-index:400;align-items:center;justify-content:center">
   <div style="background:var(--surface);border-radius:var(--radius-lg);padding:24px 28px;max-width:900px;width:96%;box-shadow:var(--shadow-lg);max-height:92vh;display:flex;flex-direction:column;gap:14px">
 
