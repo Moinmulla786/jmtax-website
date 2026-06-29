@@ -1251,7 +1251,6 @@
               <thead>
                 <tr>
                   <th style="padding:10px 16px;font-size:10px;font-weight:500;color:var(--text3);letter-spacing:.08em;text-transform:uppercase;background:var(--surface2);border-bottom:1px solid var(--border);text-align:left;width:35%">Account Name</th>
-                  <th style="padding:10px 16px;font-size:10px;font-weight:500;color:var(--text3);letter-spacing:.08em;text-transform:uppercase;background:var(--surface2);border-bottom:1px solid var(--border);text-align:left;width:18%">Type</th>
                   <th style="padding:10px 16px;font-size:10px;font-weight:500;color:var(--text3);letter-spacing:.08em;text-transform:uppercase;background:var(--surface2);border-bottom:1px solid var(--border);text-align:right">Debit (Dr)</th>
                   <th style="padding:10px 16px;font-size:10px;font-weight:500;color:var(--text3);letter-spacing:.08em;text-transform:uppercase;background:var(--surface2);border-bottom:1px solid var(--border);text-align:right">Credit (Cr)</th>
                   <th style="padding:10px 16px;background:var(--surface2);border-bottom:1px solid var(--border);width:40px"></th>
@@ -1679,7 +1678,7 @@ function getAllAccounts() {
   // New accounts — skip case-insensitive duplicates
   (companyConfig?.accounts||[]).forEach(a => {
     if(existingLow.has(a.name.toLowerCase())) return;
-    all.push({name:a.name, type:a.type||'expense', group:a.group||'Operating Expenses', gifi:a.gifi||'', isCustom:true, id:a.id});
+    all.push({name:a.name, type:a.type||'expense', group:a.group||'Operating Expenses', gifi:a.gifi||'', isBankAccount:!!a.isBankAccount, isCustom:true, id:a.id});
     existingLow.add(a.name.toLowerCase());
   });
   const _ren = (typeof companyConfig!=='undefined' && companyConfig && companyConfig.renames) || {};
@@ -1687,8 +1686,12 @@ function getAllAccounts() {
 }
 
 // ── Derived sets (all from COA — no more hardcoded lists) ──
-const ACCOUNTS          = MASTER_COA.filter(a=>a.isBankAccount).map(a=>a.name);
-const CREDIT_CARD_NAMES = new Set(MASTER_COA.filter(a=>a.isBankAccount && a.type==='liability').map(a=>a.name));
+// Bank/card accounts + credit-card set are derived LIVE from the COA, so renames and
+// custom bank accounts flow through to every dropdown (COA = single source of truth).
+Object.defineProperty(window, 'ACCOUNTS', { configurable:true,
+  get: () => getAllAccounts().filter(a=>a.isBankAccount).map(a=>a.name) });
+Object.defineProperty(window, 'CREDIT_CARD_NAMES', { configurable:true,
+  get: () => new Set(getAllAccounts().filter(a=>a.isBankAccount && a.type==='liability').map(a=>a.name)) });
 
 // Canonical account name — maps any case-variant to the official COA name.
 // Prevents duplicate ledger accounts like "Corporate tax instalment" vs "Corporate Tax Instalment".
@@ -2317,6 +2320,7 @@ function coaFlowRender() {
     ['equity','Equity','Balance Sheet','Credit'],
     ['revenue','Revenue','Profit & Loss','Credit'],
     ['expense','Expenses','Profit & Loss','Debit'],
+    ['special','Special / Control','used as categories only','—'],
   ];
   const typeColors = {asset:'var(--accent)',liability:'var(--danger)',equity:'var(--info)',revenue:'#22a37c',expense:'var(--text2)'};
   let html = '';
@@ -3653,7 +3657,7 @@ function renderDashboard() {
   // Account summary — include opening balances from Opening Balances tab
   const accts = {};
   // Start with opening balances for known bank accounts
-  openingBalances.filter(ob => ACCOUNTS.includes(ob.account) || ob.type==='asset' || ob.type==='liability').forEach(ob => {
+  openingBalances.filter(ob => { const ty=getEffectiveCOA()[ob.account]?.type; return ACCOUNTS.includes(ob.account) || ty==='asset' || ty==='liability'; }).forEach(ob => {
     if(!accts[ob.account]) accts[ob.account] = {bal:0, n:0};
     // Asset accounts: opening debit increases balance; liability: opening credit increases balance
     const obBal = (parseFloat(ob.debit)||0) - (parseFloat(ob.credit)||0);
@@ -4619,15 +4623,15 @@ function guessObType(name) {
 function renderOpeningView() {
   if(!openingBalances.length) {
     openingBalances = [
-      {id:'ob-1',account:'Chequing',              type:'asset',    debit:0,credit:0},
-      {id:'ob-2',account:'Savings',               type:'asset',    debit:0,credit:0},
-      {id:'ob-3',account:'Accounts Receivable',   type:'asset',    debit:0,credit:0},
-      {id:'ob-4',account:'Inventory',             type:'asset',    debit:0,credit:0},
-      {id:'ob-5',account:'Equipment',             type:'asset',    debit:0,credit:0},
-      {id:'ob-6',account:'Accounts Payable',      type:'liability',debit:0,credit:0},
-      {id:'ob-7',account:'Visa',                  type:'liability',debit:0,credit:0},
-      {id:'ob-8',account:'Owner Equity',          type:'equity',   debit:0,credit:0},
-      {id:'ob-9',account:'Retained Earnings',     type:'equity',   debit:0,credit:0},
+      {id:'ob-1',account:'Chequing',            debit:0,credit:0},
+      {id:'ob-2',account:'Savings',             debit:0,credit:0},
+      {id:'ob-3',account:'Accounts Receivable', debit:0,credit:0},
+      {id:'ob-4',account:'Fixed Assets',        debit:0,credit:0},
+      {id:'ob-5',account:'GST/HST Payable',     debit:0,credit:0},
+      {id:'ob-6',account:'Due to Shareholder',  debit:0,credit:0},
+      {id:'ob-7',account:'Visa',                debit:0,credit:0},
+      {id:'ob-8',account:'Equity',              debit:0,credit:0},
+      {id:'ob-9',account:'Retained Earnings',   debit:0,credit:0},
     ];
   }
   redrawObTable();
@@ -4642,11 +4646,6 @@ function redrawObTable() {
         <select class="edit-input" onchange="obSetAccount('${ob.id}',this.value)" style="width:100%;font-size:12px">
           ${getAllAccounts().some(a=>a.name===ob.account)?'':`<option selected>${ob.account||''}</option>`}
           ${getAllAccounts().map(a=>`<option${a.name===ob.account?' selected':''}>${a.name}</option>`).join('')}
-        </select>
-      </td>
-      <td style="padding:6px 8px;border-bottom:1px solid var(--border)">
-        <select class="edit-input" onchange="updateOb('${ob.id}','type',this.value)" style="font-size:12px;width:100%">
-          ${OB_TYPES.map(t=>`<option${ob.type===t?' selected':''}>${t}</option>`).join('')}
         </select>
       </td>
       <td style="padding:6px 16px;border-bottom:1px solid var(--border)">
@@ -4683,7 +4682,7 @@ function deleteOb(id) {
 }
 
 function addObRow() {
-  openingBalances.push({id:`ob-${Date.now()}`, account:'', type:'asset', debit:0, credit:0});
+  openingBalances.push({id:`ob-${Date.now()}`, account:'', debit:0, credit:0});
   save();
   redrawObTable();
   setTimeout(()=>{
@@ -8295,7 +8294,7 @@ function coaAddAccount(targetId) {
   form.id = formId;
   form.style.cssText = 'background:var(--surface2);border-radius:var(--radius);padding:12px;margin-top:8px';
   form.innerHTML = `
-    <div style="display:grid;grid-template-columns:1fr 130px 160px 90px auto;gap:8px;align-items:end">
+    <div style="display:grid;grid-template-columns:1fr 110px 150px 80px 92px auto;gap:8px;align-items:end">
       <div>
         <div class="edit-label">Account Name</div>
         <input class="edit-input" id="coa-new-name" placeholder="e.g. Dividend Paid" style="width:100%;font-size:12px">
@@ -8315,6 +8314,10 @@ function coaAddAccount(targetId) {
       <div>
         <div class="edit-label">GIFI Code</div>
         <input class="edit-input" id="coa-new-gifi" placeholder="opt." style="width:100%;font-size:12px">
+      </div>
+      <div>
+        <div class="edit-label">Bank / Card?</div>
+        <label style="display:flex;align-items:center;gap:5px;font-size:11px;padding:7px 0"><input type="checkbox" id="coa-new-bank"> Payment</label>
       </div>
       <div style="display:flex;gap:6px;padding-top:18px">
         <button class="btn btn-sm btn-primary" onclick="coaSaveNew()">Add</button>
@@ -8345,7 +8348,8 @@ function coaSaveNew() {
     toast(`⚠ "${name}" already exists`); return;
   }
   if(!companyConfig.accounts) companyConfig.accounts = [];
-  companyConfig.accounts.push({id:`acct-${Date.now()}`, name, type, group, gifi});
+  const isBank = document.getElementById('coa-new-bank')?.checked || false;
+  companyConfig.accounts.push({id:`acct-${Date.now()}`, name, type, group, gifi, isBankAccount:isBank});
   refreshAccountSets();
   save();
   if(typeof coaRender==='function') coaRender();
