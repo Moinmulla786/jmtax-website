@@ -1868,18 +1868,33 @@ function ck(key) {
   return id ? `${id}_${key}` : key;
 }
 
+let _saveErrorShown = false;
 const save = () => {
-  localStorage.setItem(ck('ledger_txs'), JSON.stringify(transactions));
-  localStorage.setItem(ck('ledger_ob'),  JSON.stringify(openingBalances));
-  localStorage.setItem(ck('ledger_sh'),  JSON.stringify(shEntries||[]));
-  localStorage.setItem(ck('ledger_inv'), JSON.stringify(invoices||[]));
-  localStorage.setItem(ck('ledger_invnum'), String(invNextNum||1));
-  localStorage.setItem(ck('ledger_ho'),  JSON.stringify(hoData||{}));
-  localStorage.setItem(ck('ledger_assets'), JSON.stringify(fixedAssets||[]));
-  localStorage.setItem(ck('ledger_cfg'), JSON.stringify(companyConfig||{}));
-  localStorage.setItem(ck('ledger_aje'), JSON.stringify(adjustingEntries||[]));
-  // Keep client registry name in sync with company name
-  syncClientName();
+  try {
+    localStorage.setItem(ck('ledger_txs'), JSON.stringify(transactions));
+    localStorage.setItem(ck('ledger_ob'),  JSON.stringify(openingBalances));
+    localStorage.setItem(ck('ledger_sh'),  JSON.stringify(shEntries||[]));
+    localStorage.setItem(ck('ledger_inv'), JSON.stringify(invoices||[]));
+    localStorage.setItem(ck('ledger_invnum'), String(invNextNum||1));
+    localStorage.setItem(ck('ledger_ho'),  JSON.stringify(hoData||{}));
+    localStorage.setItem(ck('ledger_assets'), JSON.stringify(fixedAssets||[]));
+    localStorage.setItem(ck('ledger_cfg'), JSON.stringify(companyConfig||{}));
+    localStorage.setItem(ck('ledger_aje'), JSON.stringify(adjustingEntries||[]));
+    // Keep client registry name in sync with company name
+    syncClientName();
+    _saveErrorShown = false; // a successful save clears any prior failure latch
+  } catch(err) {
+    // Storage write failed (most commonly QuotaExceededError) — the latest change was NOT
+    // persisted. Surface this loudly instead of silently losing the user's data.
+    const quota = !!err && (err.name==='QuotaExceededError' || err.code===22 || err.code===1014
+                   || (''+(err.message||'')).toLowerCase().includes('quota'));
+    const msg = quota
+      ? '⚠ STORAGE FULL — your latest change was NOT saved. Open Settings → Backup, export a backup now, then delete old transactions or unused clients to free space.'
+      : '⚠ Could not save to browser storage — your latest change may not be saved. Export a backup from Settings → Backup to be safe.';
+    try { toast(msg); } catch(_) {}
+    if(!_saveErrorShown) { _saveErrorShown = true; try { alert(msg); } catch(_) {} }
+    try { console.error('save() failed:', err); } catch(_) {}
+  }
 };
 function syncClientName() {
   const id = getActiveClientId();
@@ -1960,6 +1975,26 @@ function toast(msg) {
   el.textContent = msg; el.classList.add('show');
   setTimeout(() => el.classList.remove('show'), 2800);
 }
+// HTML-escape untrusted text (transaction descriptions, notes, client/account names, etc.)
+// before interpolating into innerHTML or into a double-quoted attribute value. Prevents script
+// injection (e.g. an imported CSV description like <img src=x onerror=...> or a value="..."
+// breakout) from executing and reading localStorage (API key, client data).
+function esc(s){
+  return String(s==null?'':s).replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+// Safely encode one CSV cell: (1) neutralise spreadsheet formula injection (a text cell starting
+// with = + @ - tab/CR can execute when opened in Excel/Sheets) without mangling real numbers, and
+// (2) quote fields containing comma/quote/newline, doubling embedded quotes (RFC 4180).
+function csvCell(v){
+  if(v==null) return '';
+  if(typeof v === 'number') return String(v);          // numbers pass through unquoted
+  let s = String(v);
+  const isPlainNumber = /^-?\d+(\.\d+)?$/.test(s);     // a whole-string number, e.g. "-1234.56"
+  if(/^[=+@\t\r]/.test(s) || (/^-/.test(s) && !isPlainNumber)) s = "'" + s; // de-fang formulas, keep real negatives
+  if(/[",\n\r]/.test(s)) s = '"' + s.replace(/"/g,'""') + '"';
+  return s;
+}
+const csvRow = arr => arr.map(csvCell).join(',');
 function setLoading(msg) {
   const ov = document.getElementById('loading-overlay');
   if(msg) { document.getElementById('loading-msg').textContent = msg; ov.classList.add('show'); }
@@ -2239,7 +2274,7 @@ function parseBankStatement(pages, fullText, account) {
       id:'tx-'+Date.now()+'-'+i+'-'+Math.random().toString(36).slice(2,5),
       date:t.date, description:t.desc, amount:parseFloat(amt.toFixed(2)),
       category:'Uncategorized', account, notes:'', reconciled:false,
-      hstRate:13, hstAmount:0, hstType:'none'
+      hstRate:defaultHstRate(), hstAmount:0, hstType:'none'
     };
   });
   result.summary = { opening, closing, nativeNet, reconciles, count: result.length, account, isCC };
@@ -2253,7 +2288,7 @@ function showPdfPreview(rows, account) {
   pendingPdfSummary = rows.summary || null;
   pendingPdfRows = rows.map(t => ({...t, account}));
   const sel = document.getElementById('pdf-preview-account');
-  if(sel) sel.innerHTML = ACCOUNTS.map(a=>`<option${a===account?' selected':''}>${a}</option>`).join('');
+  if(sel) sel.innerHTML = ACCOUNTS.map(a=>`<option${a===account?' selected':''}>${esc(a)}</option>`).join('');
   renderPdfPreview();
   document.getElementById('pdf-preview-modal').style.display = 'flex';
 }
@@ -2276,7 +2311,7 @@ function renderPdfPreview() {
   }
   document.getElementById('pdf-preview-tbody').innerHTML = rows.map(t=>`<tr>
     <td style="padding:4px 8px;white-space:nowrap;color:var(--text2)">${fmtDate(t.date)}</td>
-    <td style="padding:4px 8px">${t.description||'<em style="color:var(--text3)">No description</em>'}</td>
+    <td style="padding:4px 8px">${esc(t.description)||'<em style="color:var(--text3)">No description</em>'}</td>
     <td style="padding:4px 8px;text-align:right" class="${t.amount<0?'tx-amount-neg':'tx-amount-pos'}">${fmt(t.amount)}</td></tr>`).join('');
   document.getElementById('pdf-preview-count').textContent = `${rows.length} transactions`;
 }
@@ -2345,7 +2380,7 @@ function coaFlowRender() {
           const gifi = (typeof getGifi==='function' ? getGifi(a.name) : (a.gifi||'')) || '—';
           const bal = balOf(a.name);
           return `<tr style="border-bottom:1px solid var(--border)">
-            <td style="padding:6px 8px;font-weight:500">${a.name}${a.isBankAccount?' <span style="font-size:10px;color:var(--text3)">(bank/card)</span>':''}</td>
+            <td style="padding:6px 8px;font-weight:500">${esc(a.name)}${a.isBankAccount?' <span style="font-size:10px;color:var(--text3)">(bank/card)</span>':''}</td>
             <td style="padding:6px 8px;color:var(--text3)">${a.group||'—'}</td>
             <td style="padding:6px 8px;color:var(--text3);font-family:var(--mono)">${gifi}</td>
             <td style="padding:6px 8px;color:var(--text3)">${a.isCustom?'<span style="color:var(--accent)">custom</span>':'built-in'}</td>
@@ -2669,7 +2704,7 @@ function confirmImport() {
       id:`tx-${Date.now()}-${i}-${Math.random().toString(36).slice(2,5)}`,
       date, description:g('desc'), amount:parseFloat(amt.toFixed(2)),
       category:cat, account, notes:'', reconciled:false,
-      hstRate:13, hstAmount:0, hstType:'none'
+      hstRate:defaultHstRate(), hstAmount:0, hstType:'none'
     };
   }).filter(Boolean);
 
@@ -3009,7 +3044,7 @@ function addManual() {
     date:new Date().toISOString().slice(0,10),
     description:'', amount:0, category:'Uncategorized',
     account:'Chequing', notes:'', reconciled:false,
-    hstRate:13, hstAmount:0, hstType:'none'
+    hstRate:defaultHstRate(), hstAmount:0, hstType:'none'
   };
   transactions.unshift(tx);
   save(); showView('transactions'); renderTransactions();
@@ -3238,6 +3273,9 @@ function linkAsTransfer() {
       return {...t,
         category: 'Transfer',
         transferPairId: transferId,
+        // Explicit direction so the ledger balances regardless of the imported amount signs
+        // (banks sometimes export both legs as positive). Original amounts are left untouched.
+        transferDir: t.id===outId ? 'out' : 'in',
         notes: t.id===outId
           ? `Transfer to ${transactions.find(x=>x.id===inId)?.account||'other account'}`
           : `Transfer from ${transactions.find(x=>x.id===outId)?.account||'other account'}`
@@ -3364,9 +3402,9 @@ function renderTransactions() {
     return `<tr class="tx-row${isSel?' selected':''}" data-id="${tx.id}">
       <td><input type="checkbox" ${isSel?'checked':''} onchange="toggleSelect('${tx.id}',event.shiftKey)" onclick="event.stopPropagation()"></td>
       <td style="white-space:nowrap;color:var(--text2)">${fmtDate(tx.date)}</td>
-      <td class="tx-desc" title="${tx.description}">${tx.description||'<em style="color:var(--text3)">No description</em>'}${tx.notes?`<br><span style="font-size:10px;color:var(--text3)">${tx.notes}</span>`:''}${tx.linkedInvoiceId?`<br><span style="font-size:10px;background:var(--accent-light);color:var(--accent-text);padding:1px 6px;border-radius:99px">${(invoices.find(i=>i.id===tx.linkedInvoiceId)?.invoiceNum)||'Invoice'} ✓</span>`:''}${tx.transferPairId?`<span style="font-size:10px;background:#e8eef8;color:#3b5bdb;padding:1px 6px;border-radius:99px;margin-left:4px">⇄ Transfer</span>`:''}</td>
-      <td><span class="badge ${tx.category==='Uncategorized'?'badge-warn':'badge-ok'}">${tx.category}</span></td>
-      <td style="color:var(--text2)">${tx.account}</td>
+      <td class="tx-desc" title="${esc(tx.description)}">${esc(tx.description)||'<em style="color:var(--text3)">No description</em>'}${tx.notes?`<br><span style="font-size:10px;color:var(--text3)">${esc(tx.notes)}</span>`:''}${tx.linkedInvoiceId?`<br><span style="font-size:10px;background:var(--accent-light);color:var(--accent-text);padding:1px 6px;border-radius:99px">${(invoices.find(i=>i.id===tx.linkedInvoiceId)?.invoiceNum)||'Invoice'} ✓</span>`:''}${tx.transferPairId?`<span style="font-size:10px;background:#e8eef8;color:#3b5bdb;padding:1px 6px;border-radius:99px;margin-left:4px">⇄ Transfer</span>`:''}</td>
+      <td><span class="badge ${tx.category==='Uncategorized'?'badge-warn':'badge-ok'}">${esc(tx.category)}</span></td>
+      <td style="color:var(--text2)">${esc(tx.account)}</td>
       <td style="text-align:right" class="${tx.amount>=0?'tx-amount-pos':'tx-amount-neg'}">${fmt(tx.amount)}</td>
       <td style="text-align:right;font-size:12px;color:var(--text2)">${hst>0?fmt(hst):'<span style="color:var(--text3)">—</span>'}</td>
       <td><span class="tx-recon">${tx.reconciled?'✓':''}</span></td>
@@ -3410,7 +3448,7 @@ function renderTransactions() {
         <div style="display:flex;gap:20px;flex-wrap:wrap;align-items:flex-start">
           ${allBankAccts.map(([acc,b]) => `
             <div style="min-width:150px">
-              <div style="font-size:11px;font-weight:600;color:var(--text2);margin-bottom:4px;text-transform:uppercase;letter-spacing:.05em">${acc}</div>
+              <div style="font-size:11px;font-weight:600;color:var(--text2);margin-bottom:4px;text-transform:uppercase;letter-spacing:.05em">${esc(acc)}</div>
               <div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:2px">
                 <span style="color:var(--text3)">Opening</span>
                 <span style="font-family:var(--mono)">${fmt(b.opening)}</span>
@@ -3438,13 +3476,13 @@ function renderTransactions() {
   const cats = [...new Set(transactions.map(t=>t.category).filter(Boolean))].sort();
   const catFilter = document.getElementById('category-filter');
   const curVal = catFilter.value;
-  catFilter.innerHTML = '<option value="">All Categories</option>' + cats.map(c=>`<option${c===curVal?'selected':''}>${c}</option>`).join('');
+  catFilter.innerHTML = '<option value="">All Categories</option>' + cats.map(c=>`<option${c===curVal?'selected':''}>${esc(c)}</option>`).join('');
 }
 
 function renderEditRow(tx) {
-  const catOpts = CATEGORIES.map(c=>`<option${c===tx.category?' selected':''}>${c}</option>`).join('');
-  const accOpts = ACCOUNTS.map(a=>`<option${a===tx.account?' selected':''}>${a}</option>`).join('');
-  const hstRate = tx.hstRate !== undefined ? tx.hstRate : 13;
+  const catOpts = CATEGORIES.map(c=>`<option${c===tx.category?' selected':''}>${esc(c)}</option>`).join('');
+  const accOpts = ACCOUNTS.map(a=>`<option${a===tx.account?' selected':''}>${esc(a)}</option>`).join('');
+  const hstRate = tx.hstRate !== undefined ? tx.hstRate : defaultHstRate();
   const hstAmt  = tx.hstAmount !== undefined ? tx.hstAmount : 0;
   const hstType = tx.hstType || 'none';
   return `<tr class="edit-row" data-id="${tx.id}">
@@ -3460,11 +3498,11 @@ function renderEditRow(tx) {
         </div>
         <div>
           <div class="edit-label">Description</div>
-          <input class="edit-input" value="${tx.description}" data-field="description" oninput="event.stopPropagation();updateField('${tx.id}','description',this.value)">
+          <input class="edit-input" value="${esc(tx.description)}" data-field="description" oninput="event.stopPropagation();updateField('${tx.id}','description',this.value)">
         </div>
         <div>
           <div class="edit-label">Notes</div>
-          <input class="edit-input" value="${tx.notes}" data-field="notes" oninput="event.stopPropagation();updateField('${tx.id}','notes',this.value)">
+          <input class="edit-input" value="${esc(tx.notes)}" data-field="notes" oninput="event.stopPropagation();updateField('${tx.id}','notes',this.value)">
         </div>
         <div>
           <div class="edit-label">Account</div>
@@ -3513,7 +3551,7 @@ function renderEditRow(tx) {
             <option value="">— Select invoice to apply payment —</option>
             ${invoices.filter(i=>i.status!=='void'&&i.status!=='draft').map(i=>`
               <option value="${i.id}" ${tx.linkedInvoiceId===i.id?'selected':''}>
-                ${i.invoiceNum} · ${i.client} · ${fmt(parseFloat(i.total)||0)} (${autoInvStatus(i)})
+                ${esc(i.invoiceNum)} · ${esc(i.client)} · ${fmt(parseFloat(i.total)||0)} (${autoInvStatus(i)})
               </option>`).join('')}
           </select>
           ${tx.linkedInvoiceId ? `<button class="btn btn-sm" onclick="event.stopPropagation();linkTxToInvoice('${tx.id}','')">✕ Unlink</button>` : ''}
@@ -3529,6 +3567,17 @@ function renderEditRow(tx) {
   </tr>`;
 }
 
+// Default combined GST/HST rate (%) for the company's province. HST provinces use the combined
+// rate; GST-only provinces/territories use 5% (PST/QST tracked separately). Unknown → 13 (legacy default).
+function defaultHstRate() {
+  const p = ((typeof companyConfig!=='undefined' && companyConfig && companyConfig.province) || '').toLowerCase();
+  if(!p) return 13;
+  if(p.includes('ontario')) return 13;
+  if(p.includes('nova scotia')) return 14;                                   // 15% before Apr 2025, 14% after
+  if(p.includes('new brunswick') || p.includes('newfoundland') || p.includes('prince edward')) return 15;
+  return 5;                                                                  // BC/AB/SK/MB/QC + territories: GST only here
+}
+
 function recalcHst(id) {
   // Read live values straight from the DOM — don't rely on transactions state
   // because the user may still be editing
@@ -3539,7 +3588,7 @@ function recalcHst(id) {
   if(!typeEl || !hstEl) return;
 
   const type = typeEl.value;
-  const rate = parseFloat(rateEl?.value) || 13;
+  const rate = parseFloat(rateEl?.value) || defaultHstRate();
   const amt  = Math.abs(parseFloat(amtEl?.value) || 0);
 
   let hst = parseFloat(hstEl.value) || 0; // keep manual value by default
@@ -3615,12 +3664,17 @@ function expenseAmt(t) { return Math.abs(t.amount); }
 
 // ——— Dashboard ———
 function renderDashboard() {
-  const txIncome  = transactions.filter(isIncome).reduce((s,t)=>s+Math.abs(t.amount),0);
+  // Source headline figures from the same ledger as the reports so the dashboard agrees with the
+  // P&L / Balance Sheet (all NET of HST). Previously it mixed gross transaction income with net
+  // invoice income and gross expenses, so the numbers disagreed with every report.
+  const full = buildFullLedger();
+  let income = 0, expenses = 0;
+  Object.values(full).forEach(a => {
+    if(a.type==='revenue') income   += (a.clCr - a.clDr);
+    else if(a.type==='expense') expenses += (a.clDr - a.clCr);
+  });
   const invIncome = invoices.filter(inv=>inv.status!=='void'&&inv.status!=='draft')
                       .reduce((s,inv)=>s+(parseFloat(inv.subtotal)||0),0);
-  const income   = txIncome + invIncome;
-  const expenses = transactions.filter(isExpense).reduce((s,t)=>s+expenseAmt(t),0)
-                 + shEntries.reduce((s,e)=>s+Math.abs(e.amount),0);
   const net  = income - expenses;
   const uncat = transactions.filter(t=>t.category==='Uncategorized').length;
   const arOutstanding = invoices.filter(inv=>inv.status!=='paid'&&inv.status!=='void'&&inv.status!=='draft')
@@ -3650,7 +3704,7 @@ function renderDashboard() {
   const max = sorted[0]?.[1]||1;
   document.getElementById('category-bars').innerHTML = sorted.length ? sorted.map(([cat,amt])=>`
     <div class="bar-row">
-      <div class="bar-meta"><span style="color:var(--text)">${cat}</span><span style="font-weight:500">${fmt(amt)}</span></div>
+      <div class="bar-meta"><span style="color:var(--text)">${esc(cat)}</span><span style="font-weight:500">${fmt(amt)}</span></div>
       <div class="bar-track"><div class="bar-fill" style="width:${(amt/max*100).toFixed(1)}%"></div></div>
     </div>`).join('') : '<p style="font-size:12px;color:var(--text3)">No expense data yet.</p>';
 
@@ -3671,7 +3725,7 @@ function renderDashboard() {
   });
   document.getElementById('account-summary').innerHTML = Object.keys(accts).length ? Object.entries(accts).map(([acc,d])=>`
     <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--border)">
-      <div><span style="font-size:13px">${acc}</span><span style="font-size:11px;color:var(--text3);margin-left:8px">${d.n} txns</span></div>
+      <div><span style="font-size:13px">${esc(acc)}</span><span style="font-size:11px;color:var(--text3);margin-left:8px">${d.n} txns</span></div>
       <span style="font-weight:500;color:${d.bal>=0?'var(--accent)':'var(--danger)'}">${fmt(d.bal)}</span>
     </div>`).join('') : '<p style="font-size:12px;color:var(--text3)">No account data yet.</p>';
 
@@ -3856,17 +3910,15 @@ function buildLedger(txList) {
     const isBank = BANK_ACCTS.has(acc) || (!isCreditCard && !CREDIT_CARD_ACCTS.has(acc));
     ensure(acc);
 
-    // Transfers: post to bank accounts only (DR one, CR the other) for balance sheet accuracy
+    // Transfers: post to the bank/card account only (the matching leg posts the other side), so a
+    // linked pair nets to DR one account / CR the other. Use the explicit direction recorded by
+    // linkAsTransfer when present — this keeps the pair balanced even when a bank exported BOTH
+    // legs as positive — and fall back to the amount sign for legacy/manually-tagged transfers.
     if(t.category==='Transfer') {
-      if(!isCreditCard) {
-        // Bank account: money in = DR, money out = CR
-        if(rawAmt >= 0) ledger[acc].debit  += amt;
-        else              ledger[acc].credit += amt;
-      } else {
-        // Credit card: money in (payment) = DR liability, spending = CR liability
-        if(rawAmt >= 0) ledger[acc].debit  += amt;
-        else              ledger[acc].credit += amt;
-      }
+      const dir = t.transferDir || (rawAmt >= 0 ? 'in' : 'out');
+      // money in (deposit / card payment) = DR; money out (withdrawal / card spend) = CR
+      if(dir === 'in') ledger[acc].debit  += amt;
+      else             ledger[acc].credit += amt;
       return;
     }
 
@@ -3895,7 +3947,7 @@ function buildLedger(txList) {
     const isEquityCat  = catType==='equity';
 
     if(isExpenseCat) {
-      const hst = parseFloat(t.hstAmount)||0;
+      const hst = Math.min(Math.max(parseFloat(t.hstAmount)||0, 0), amt); // clamp: never negative or > gross
       const net = hst > 0 ? amt - hst : amt;
       if(rawAmt < 0) {
         // Expense: DR Expense (net) + DR GST/HST Payable (ITC) / CR Bank (gross)
@@ -3915,7 +3967,7 @@ function buildLedger(txList) {
         }
       }
     } else if(isRevenueCat && cat !== 'Investments') {
-      const hst = parseFloat(t.hstAmount)||0;
+      const hst = Math.min(Math.max(parseFloat(t.hstAmount)||0, 0), amt); // clamp: never negative or > gross
       const net = hst > 0 ? amt - hst : amt;
       if(t.linkedInvoiceId) {
         ensure('Accounts Receivable');
@@ -3952,16 +4004,22 @@ function buildLedger(txList) {
       else              { ledger[cat].debit   += amt; ledger[acc].credit += amt; }
     }
   });
-  // Merge Adjusting Journal Entries — direct double-entry postings
+  // Merge Adjusting Journal Entries — direct double-entry postings.
+  // Defend the READ path (the editor validates on save, but a corrupted/imported localStorage
+  // payload or the in-progress 'new' draft must never post a one-sided entry that unbalances the
+  // Trial Balance): skip the unsaved draft and skip any entry whose lines don't balance.
   if(!txList) {
     adjustingEntries.forEach(e => {
-      (e.lines||[]).forEach(l => {
+      if(e.id === 'new') return;                          // unsaved draft still being typed
+      const lines = e.lines || [];
+      const drSum = lines.reduce((s,l)=>s+(parseFloat(l.debit)||0),0);
+      const crSum = lines.reduce((s,l)=>s+(parseFloat(l.credit)||0),0);
+      if(Math.abs(drSum - crSum) > 0.005) return;         // unbalanced → don't corrupt the ledger
+      lines.forEach(l => {
         const acc = l.account; if(!acc) return;
         ensure(acc);
-        const dr = parseFloat(l.debit)||0;
-        const cr = parseFloat(l.credit)||0;
-        ledger[acc].debit  += dr;
-        ledger[acc].credit += cr;
+        ledger[acc].debit  += parseFloat(l.debit)||0;
+        ledger[acc].credit += parseFloat(l.credit)||0;
       });
     });
   }
@@ -3972,12 +4030,14 @@ function buildLedger(txList) {
       ledger[name].debit  += bal.debit;
       ledger[name].credit += bal.credit;
     });
-    // Merge invoice AR postings — only for invoices NOT already covered by a linked bank transaction
-    // If an invoice is linked to a transaction, the bank tx already posts DR Bank / CR Revenue
-    const linkedInvIds = new Set(transactions.filter(t=>t.linkedInvoiceId).map(t=>t.linkedInvoiceId));
+    // Merge invoice postings: every non-void/draft invoice recognizes revenue and opens A/R.
+    // A/R is cleared ONLY by a linked bank/cash transaction (DR Bank / CR A/R, posted in the tx
+    // loop above when a deposit is linked). The invoice's "paid" status is a display label and
+    // posts nothing here — this keeps the GL in step with the A/R subledger and the bank rec, and
+    // prevents the double-credit to A/R that previously threw the trial balance out of balance.
     invoices.filter(inv=>inv.status!=='void'&&inv.status!=='draft').forEach(inv => {
       const total  = parseFloat(inv.total)||0;
-      const hst    = parseFloat(inv.hstAmount)||0;
+      const hst    = Math.min(Math.max(parseFloat(inv.hstAmount)||0, 0), total); // clamp: never negative or > total
       const net    = total - hst;
       const rev    = inv.category||'Sales Revenue';
       ensure('Accounts Receivable'); ensure(rev);
@@ -3988,21 +4048,21 @@ function buildLedger(txList) {
         ensure('GST/HST Payable');
         ledger['GST/HST Payable'].credit += hst;
       }
-      if(inv.status==='paid') {
-        ledger['Accounts Receivable'].credit += total;
-      }
     });
 
-    // Merge CCA depreciation: DR Depreciation Expense / CR Accumulated Depreciation
-    const ccaYr = new Date().getFullYear().toString();
+    // Merge CCA depreciation: DR Depreciation Expense / CR Accumulated Depreciation.
+    // Post the CUMULATIVE CCA to date (all years through the reporting year) so the ledger's
+    // accumulated depreciation matches the Balance Sheet's Net Book Value. Posting only one year
+    // here (while the BS netted all years) is what previously threw the BS out of balance in year 2+.
+    const ccaYr = ccaThroughYear();
     fixedAssets.forEach(asset => {
-      const c = calcCCA(asset, ccaYr);
-      if(c.actualCCA <= 0) return;
+      const cum = calcCCAseries(asset, ccaYr).cumulative;
+      if(cum <= 0) return;
       const expAcct = `Depreciation — Class ${asset.ccaClass}`;
       const accumAcct = `Accum. Depreciation — Class ${asset.ccaClass}`;
       ensure(expAcct); ensure(accumAcct);
-      ledger[expAcct].debit  += c.actualCCA;
-      ledger[accumAcct].credit += c.actualCCA;
+      ledger[expAcct].debit  += cum;
+      ledger[accumAcct].credit += cum;
     });
   }
   Object.keys(ledger).forEach(k => {
@@ -4105,7 +4165,7 @@ function renderTrialBalance() {
       html += `<tr class="tb-row">
         <td style="padding:7px 0 7px 18px;border-bottom:1px solid var(--border);cursor:pointer"
           onclick="drilldown('${a.name.replace(/'/g,"\\'")}')" title="View in General Ledger">
-          ${a.name} <span style="font-size:10px;color:var(--text3)">↗</span>
+          ${esc(a.name)} <span style="font-size:10px;color:var(--text3)">↗</span>
         </td>
         ${tdR(a.obDr,true)}${tdR(a.obCr,false)}
         ${tdR(a.mvDr,true)}${tdR(a.mvCr,false)}
@@ -4355,7 +4415,7 @@ function renderHST() {
       </tr>
       ${Object.entries(byCat).map(([cat,v])=>`
         <tr>
-          <td style="padding:6px 0;border-bottom:1px solid var(--border);font-size:12px">${cat}</td>
+          <td style="padding:6px 0;border-bottom:1px solid var(--border);font-size:12px">${esc(cat)}</td>
           <td style="text-align:right;padding:6px 0;border-bottom:1px solid var(--border);font-size:12px;color:var(--danger)">${v.collected>0?fmt(v.collected):'—'}</td>
           <td style="text-align:right;padding:6px 0;border-bottom:1px solid var(--border);font-size:12px;color:var(--accent)">${v.paid>0?fmt(v.paid):'—'}</td>
           <td style="text-align:right;padding:6px 0;border-bottom:1px solid var(--border);font-size:12px;color:var(--text3)">${v.count}</td>
@@ -4463,21 +4523,33 @@ function renderGL() {
     }
   });
 
-  // 3. Shareholder entries — DR expense / CR Due to Shareholder
+  // 3. Shareholder entries — DR expense (net) + DR GST/HST Payable (ITC) / CR Due to Shareholder (gross)
   shEntries.forEach(e => {
-    const amt = Math.abs(e.amount);
+    const amt = Math.abs(parseFloat(e.amount)||0);
+    if(!amt) return;
+    const hst = Math.min(Math.max(parseFloat(e.hstAmount)||0, 0), amt);
+    const net = amt - hst;
     const cat = (e.category==='Uncategorized')?'Office Expenses':e.category;
     const catType = COA[cat]?.type || 'expense';
     ensure(cat, catType);
     ensure('Due to Shareholder', 'liability');
     const label = `${e.description||'(no desc)'} [${e.shareholder}]`;
-    accounts[cat].entries.push({date:e.date, description:label, source:'Shareholder', dr:amt, cr:0});
+    accounts[cat].entries.push({date:e.date, description:label, source:'Shareholder', dr:net, cr:0});
+    if(hst > 0) {
+      ensure('GST/HST Payable', 'liability');
+      accounts['GST/HST Payable'].entries.push({date:e.date, description:label+' (ITC)', source:'Shareholder', dr:hst, cr:0});
+    }
     accounts['Due to Shareholder'].entries.push({date:e.date, description:label, source:'Shareholder', dr:0, cr:amt});
   });
 
-  // 4a. Adjusting Journal Entries
+  // 4a. Adjusting Journal Entries (skip the unsaved draft and any unbalanced entry, matching buildLedger)
   adjustingEntries.forEach(e => {
-    (e.lines||[]).forEach(l => {
+    if(e.id === 'new') return;
+    const _lines = e.lines || [];
+    const _dr = _lines.reduce((s,l)=>s+(parseFloat(l.debit)||0),0);
+    const _cr = _lines.reduce((s,l)=>s+(parseFloat(l.credit)||0),0);
+    if(Math.abs(_dr - _cr) > 0.005) return;
+    _lines.forEach(l => {
       if(!l.account) return;
       const dr = parseFloat(l.debit)||0;
       const cr = parseFloat(l.credit)||0;
@@ -4491,19 +4563,20 @@ function renderGL() {
     });
   });
 
-  // 4b. CCA Depreciation — DR Depreciation Expense / CR Accumulated Depreciation
-  const glYr = new Date().getFullYear().toString();
+  // 4b. CCA Depreciation — DR Depreciation Expense / CR Accumulated Depreciation.
+  // Cumulative CCA to date, matching buildLedger and the Balance Sheet NBV.
+  const glYr = ccaThroughYear();
   fixedAssets.forEach(asset => {
-    const c = calcCCA(asset, glYr);
-    if(c.actualCCA <= 0) return;
+    const cum = calcCCAseries(asset, glYr).cumulative;
+    if(cum <= 0) return;
     const expAcct   = `Depreciation — Class ${asset.ccaClass}`;
     const accumAcct = `Accum. Depreciation — Class ${asset.ccaClass}`;
     ensure(expAcct,   'expense');
     ensure(accumAcct, 'asset');
-    const label = `CCA ${glYr} — ${asset.name} (Class ${asset.ccaClass})`;
+    const label = `CCA through ${glYr} — ${asset.name} (Class ${asset.ccaClass})`;
     const dateStr = `${glYr}-12-31`;
-    accounts[expAcct].entries.push({date:dateStr, description:label, source:'CCA', dr:c.actualCCA, cr:0});
-    accounts[accumAcct].entries.push({date:dateStr, description:label, source:'CCA', dr:0, cr:c.actualCCA});
+    accounts[expAcct].entries.push({date:dateStr, description:label, source:'CCA', dr:cum, cr:0});
+    accounts[accumAcct].entries.push({date:dateStr, description:label, source:'CCA', dr:0, cr:cum});
   });
 
   // Sort all entries by date within each account
@@ -4515,7 +4588,7 @@ function renderGL() {
   const glAcctFilter = document.getElementById('gl-account-filter');
   const curAcct = glAcctFilter.value;
   glAcctFilter.innerHTML = '<option value="">All Accounts</option>' +
-    Object.keys(accounts).sort().map(n=>`<option${n===curAcct?' selected':''}>${n}</option>`).join('');
+    Object.keys(accounts).sort().map(n=>`<option${n===curAcct?' selected':''}>${esc(n)}</option>`).join('');
 
   // Filter — show all accounts that have either an opening balance or entries
   const typeOrder = {asset:1, liability:2, equity:3, revenue:4, expense:5};
@@ -4562,7 +4635,7 @@ function renderGL() {
       return `<tr style="${rowStyle}" ${clickAttr}
         ${isClickable?`onmouseenter="this.style.background='var(--surface2)'" onmouseleave="this.style.background=''"`:''}>
         <td style="padding:6px 8px;border-bottom:1px solid var(--border);font-size:12px;color:var(--text2);white-space:nowrap">${fmtDate(e.date)}</td>
-        <td style="padding:6px 8px;border-bottom:1px solid var(--border);font-size:12px">${e.description}${editIcon}</td>
+        <td style="padding:6px 8px;border-bottom:1px solid var(--border);font-size:12px">${esc(e.description)}${editIcon}</td>
         <td style="padding:6px 8px;border-bottom:1px solid var(--border)"><span style="${srcStyle}">${e.source}</span></td>
         <td style="padding:6px 8px;border-bottom:1px solid var(--border);text-align:right;font-size:12px">${fmtD(e.dr)}</td>
         <td style="padding:6px 8px;border-bottom:1px solid var(--border);text-align:right;font-size:12px">${fmtD(e.cr)}</td>
@@ -4593,7 +4666,7 @@ function renderGL() {
     const typeLabel = a.type.charAt(0).toUpperCase()+a.type.slice(1);
     return `<div style="margin-bottom:28px">
       <div style="display:flex;align-items:baseline;gap:10px;margin-bottom:8px">
-        <span style="font-family:var(--display);font-size:16px;font-weight:500">${name}</span>
+        <span style="font-family:var(--display);font-size:16px;font-weight:500">${esc(name)}</span>
         <span style="font-size:10px;background:var(--surface2);border:1px solid var(--border);border-radius:99px;padding:1px 8px;color:var(--text2)">${typeLabel}</span>
       </div>
       <table style="width:100%;border-collapse:collapse">
@@ -4644,8 +4717,8 @@ function redrawObTable() {
     <tr>
       <td style="padding:6px 16px;border-bottom:1px solid var(--border)">
         <select class="edit-input" onchange="obSetAccount('${ob.id}',this.value)" style="width:100%;font-size:12px">
-          ${getAllAccounts().some(a=>a.name===ob.account)?'':`<option selected>${ob.account||''}</option>`}
-          ${getAllAccounts().map(a=>`<option${a.name===ob.account?' selected':''}>${a.name}</option>`).join('')}
+          ${getAllAccounts().some(a=>a.name===ob.account)?'':`<option selected>${esc(ob.account)}</option>`}
+          ${getAllAccounts().map(a=>`<option${a.name===ob.account?' selected':''}>${esc(a.name)}</option>`).join('')}
         </select>
       </td>
       <td style="padding:6px 16px;border-bottom:1px solid var(--border)">
@@ -4719,8 +4792,16 @@ function updateObTotals() {
 }
 
 function saveOpeningBalances() {
+  // Opening balances must net to zero (debits = credits) or they unbalance the Trial Balance.
+  // Warn (don't hard-block — entry may be mid-way) before saving an out-of-balance set.
+  const totDr = openingBalances.reduce((s,o)=>s+(parseFloat(o.debit)||0),0);
+  const totCr = openingBalances.reduce((s,o)=>s+(parseFloat(o.credit)||0),0);
+  const diff = Math.abs(totDr - totCr);
+  if(diff > 0.01 && !confirm(`Opening balances are out of balance by ${fmt(diff)} (debits ${fmt(totDr)} vs credits ${fmt(totCr)}).\n\nSaving now will leave your Trial Balance out of balance by this amount. Save anyway?`)) {
+    return;
+  }
   save();
-  toast('✓ Opening balances saved');
+  toast(diff > 0.01 ? `⚠ Opening balances saved — out of balance by ${fmt(diff)}` : '✓ Opening balances saved');
   // refresh reports if visible
   if(currentView==='reports') { renderTrialBalance(); renderBalanceSheet(); }
 }
@@ -4867,27 +4948,40 @@ function renderPL() {
     const net = (a.clDr - a.clCr);
     if(net > 0.005) bycat[name] = net;
   });
-  const opExpenses = Object.values(bycat).reduce((s,v)=>s+v,0);
-
-  // ——— Shareholder-paid expenses (not in main ledger) ———
+  // ——— Shareholder-paid expenses ———
+  // These are ALREADY merged into the ledger (and therefore into `bycat`) by getShLedgerEntries()
+  // as DR <expense> / CR Due to Shareholder. To show them as their own section WITHOUT double
+  // counting, strip the shareholder portion out of the company-paid lines here, then add it back
+  // exactly once via the dedicated "Shareholder-Paid Expenses" section / shTotal below.
   const shBycat = {};
   shEntries.forEach(e => {
+    const amt = Math.abs(parseFloat(e.amount)||0);
+    const hst = Math.min(Math.max(parseFloat(e.hstAmount)||0, 0), amt);
     const cat = (e.category==='Uncategorized') ? 'Office Expenses' : e.category;
-    shBycat[cat] = (shBycat[cat]||0) + Math.abs(e.amount);
+    shBycat[cat] = (shBycat[cat]||0) + (amt - hst); // NET of HST — matches getShLedgerEntries
   });
   const shTotal   = Object.values(shBycat).reduce((s,v)=>s+v, 0);
+  // Remove shareholder-paid amounts from the company-paid `bycat` (same NET figure + category
+  // mapping as getShLedgerEntries, so the subtraction is exact).
+  Object.entries(shBycat).forEach(([cat, amt]) => {
+    if(bycat[cat] !== undefined) {
+      bycat[cat] -= amt;
+      if(bycat[cat] <= 0.005) delete bycat[cat];
+    }
+  });
+  const opExpenses = Object.values(bycat).reduce((s,v)=>s+v,0);
   const shPending = shEntries.filter(e=>e.status==='pending').reduce((s,e)=>s+Math.abs(e.amount),0);
 
-  // ——— CCA Depreciation ———
-  const yr = new Date().getFullYear().toString();
+  // ——— CCA Depreciation (cumulative to date — matches the ledger & Balance Sheet) ———
+  const yr = ccaThroughYear();
   const ccaByClass = {};
   let totalCCA = 0;
   fixedAssets.forEach(asset => {
-    const c = calcCCA(asset, yr);
-    if(c.actualCCA > 0) {
+    const cum = calcCCAseries(asset, yr).cumulative;
+    if(cum > 0) {
       const cls = `Class ${asset.ccaClass}`;
-      ccaByClass[cls] = (ccaByClass[cls]||0) + c.actualCCA;
-      totalCCA += c.actualCCA;
+      ccaByClass[cls] = (ccaByClass[cls]||0) + cum;
+      totalCCA += cum;
     }
   });
 
@@ -5086,6 +5180,11 @@ function renderBalanceSheet() {
   Object.entries(full).forEach(([name, a]) => {
     const net = a.clDr - a.clCr; // positive = debit balance, negative = credit balance
     if(a.type === 'asset') {
+      // Accumulated depreciation is a contra-asset that is ALREADY reflected in the Fixed Assets
+      // Net Book Value schedule below (NBV = cost − accumulated CCA). Including the contra account
+      // in the generic asset buckets here would subtract depreciation a second time and throw the
+      // Balance Sheet out of balance by the accumulated CCA. Skip it — NBV represents fixed assets.
+      if(name.startsWith('Accum. Depreciation')) return;
       const val = net; // assets normally debit — positive = asset value
       const coa = getEffectiveCOA();
       const grp = coa[name]?.group || '';
@@ -5103,16 +5202,14 @@ function renderBalanceSheet() {
     }
   });
 
-  // Fixed assets from CCA schedule (NBV)
-  const yr = new Date().getFullYear().toString();
+  // Fixed assets from CCA schedule (NBV). Accumulated CCA = cumulative through the reporting year,
+  // with UCC carried forward year to year — the SAME series the ledger & P&L post, so they agree.
+  const yr = ccaThroughYear();
   let totalCost=0, totalAccumDepn=0;
   const faRows = [];
   fixedAssets.forEach(asset => {
     const cost = parseFloat(asset.cost)||0;
-    let accumCCA = 0;
-    Object.keys(asset.years||{}).forEach(y => {
-      if(parseInt(y) <= parseInt(yr)) accumCCA += calcCCA(asset, y).actualCCA;
-    });
+    const accumCCA = calcCCAseries(asset, yr).cumulative;
     const nbv = cost - accumCCA;
     if(cost > 0) { faRows.push({name:asset.name, cls:asset.ccaClass, cost, accumCCA, nbv}); totalCost+=cost; totalAccumDepn+=accumCCA; }
   });
@@ -5246,8 +5343,8 @@ function renderBalanceSheet() {
 // ——— Export ———
 function exportCsv() {
   const rows = [['Date','Description','Amount','Category','Account','Reconciled','Notes']];
-  transactions.forEach(t=>rows.push([t.date,`"${t.description}"`,t.amount,t.category,t.account,t.reconciled,`"${t.notes}"`]));
-  const csv = rows.map(r=>r.join(',')).join('\n');
+  transactions.forEach(t=>rows.push([t.date,t.description,t.amount,t.category,t.account,t.reconciled,t.notes]));
+  const csv = rows.map(csvRow).join('\n');
   const a = document.createElement('a');
   a.href = 'data:text/csv;charset=utf-8,'+encodeURIComponent(csv);
   a.download = 'ledger-export.csv'; a.click();
@@ -5389,8 +5486,8 @@ function addShEntry() {
     category: 'Uncategorized',
     amount: 0,
     hstAmount: 0,
-    hstRate: 13,
-    hstType: 'none',
+    hstRate: defaultHstRate(),
+    hstType: 'inclusive',   // shareholder expenses are usually entered gross (HST included → 13/113 backed out)
     notes: '',
     status: 'pending',   // pending | reimbursed
     reimbursedDate: ''
@@ -5429,13 +5526,13 @@ function renderShareholder() {
   const shFilter = document.getElementById('sh-shareholder-filter');
   const curSh = shFilter.value;
   shFilter.innerHTML = '<option value="">All Shareholders</option>' +
-    shareholders.map(s=>`<option${s===curSh?' selected':''}>${s}</option>`).join('');
+    shareholders.map(s=>`<option${s===curSh?' selected':''}>${esc(s)}</option>`).join('');
 
   const cats = [...new Set(shEntries.map(e=>e.category))].sort();
   const catFilter = document.getElementById('sh-category-filter');
   const curCat = catFilter.value;
   catFilter.innerHTML = '<option value="">All Categories</option>' +
-    cats.map(c=>`<option${c===curCat?' selected':''}>${c}</option>`).join('');
+    cats.map(c=>`<option${c===curCat?' selected':''}>${esc(c)}</option>`).join('');
 
   if(!filtered.length) {
     tbody.innerHTML = `<tr><td colspan="9"><div class="empty-state">
@@ -5461,9 +5558,9 @@ function renderShareholder() {
     return `<tr class="tx-row${isSel?' selected':''}" data-id="${e.id}">
       <td><input type="checkbox" ${isSel?'checked':''} onchange="toggleShSelect('${e.id}')" onclick="event.stopPropagation()"></td>
       <td style="white-space:nowrap;color:var(--text2)">${fmtDate(e.date)}</td>
-      <td style="font-size:12px;color:var(--text2);white-space:nowrap">${e.shareholder}</td>
-      <td class="tx-desc" title="${e.description}">${e.description||'<em style="color:var(--text3)">No description</em>'}${e.notes?`<br><span style="font-size:10px;color:var(--text3)">${e.notes}</span>`:''}</td>
-      <td><span class="badge ${e.category==='Uncategorized'?'badge-warn':''}">${e.category}</span></td>
+      <td style="font-size:12px;color:var(--text2);white-space:nowrap">${esc(e.shareholder)}</td>
+      <td class="tx-desc" title="${esc(e.description)}">${esc(e.description)||'<em style="color:var(--text3)">No description</em>'}${e.notes?`<br><span style="font-size:10px;color:var(--text3)">${esc(e.notes)}</span>`:''}</td>
+      <td><span class="badge ${e.category==='Uncategorized'?'badge-warn':''}">${esc(e.category)}</span></td>
       <td style="text-align:right;font-weight:500">${fmt(Math.abs(e.amount))}</td>
       <td style="text-align:right;font-size:12px;color:var(--text2)">${hst>0?fmt(hst):'<span style="color:var(--text3)">—</span>'}</td>
       <td>${statusBadge}</td>
@@ -5485,11 +5582,11 @@ function renderShareholder() {
 }
 
 function renderShEditRow(e) {
-  const catOpts = CATEGORIES.map(c=>`<option${c===e.category?' selected':''}>${c}</option>`).join('');
+  const catOpts = CATEGORIES.map(c=>`<option${c===e.category?' selected':''}>${esc(c)}</option>`).join('');
   const shOpts  = [...new Set([...DEFAULT_SHAREHOLDERS, ...shEntries.map(x=>x.shareholder)])].map(
-    s=>`<option${s===e.shareholder?' selected':''}>${s}</option>`).join('');
+    s=>`<option${s===e.shareholder?' selected':''}>${esc(s)}</option>`).join('');
   const hstType = e.hstType||'none';
-  const hstRate = e.hstRate!==undefined ? e.hstRate : 13;
+  const hstRate = e.hstRate!==undefined ? e.hstRate : defaultHstRate();
   const hstAmt  = e.hstAmount||0;
 
   return `<tr class="edit-row" data-id="${e.id}">
@@ -5502,20 +5599,20 @@ function renderShEditRow(e) {
         </div>
         <div>
           <div class="edit-label">Shareholder</div>
-          <input class="edit-input" list="sh-datalist-${e.id}" value="${e.shareholder}"
+          <input class="edit-input" list="sh-datalist-${e.id}" value="${esc(e.shareholder)}"
             oninput="event.stopPropagation();updateShField('${e.id}','shareholder',this.value)">
           <datalist id="sh-datalist-${e.id}">
-            ${[...new Set([...DEFAULT_SHAREHOLDERS,...shEntries.map(x=>x.shareholder)])].map(s=>`<option value="${s}">`).join('')}
+            ${[...new Set([...DEFAULT_SHAREHOLDERS,...shEntries.map(x=>x.shareholder)])].map(s=>`<option value="${esc(s)}">`).join('')}
           </datalist>
         </div>
         <div>
           <div class="edit-label">Description</div>
-          <input class="edit-input" value="${e.description}"
+          <input class="edit-input" value="${esc(e.description)}"
             oninput="event.stopPropagation();updateShField('${e.id}','description',this.value)">
         </div>
         <div>
           <div class="edit-label">Notes</div>
-          <input class="edit-input" value="${e.notes}"
+          <input class="edit-input" value="${esc(e.notes)}"
             oninput="event.stopPropagation();updateShField('${e.id}','notes',this.value)">
         </div>
       </div>
@@ -5599,7 +5696,7 @@ function recalcShHst(id) {
   const hstEl  = document.getElementById(`sh-hstamt-${id}`);
   if(!typeEl||!hstEl) return;
   const type = typeEl.value;
-  const rate = parseFloat(rateEl?.value)||13;
+  const rate = parseFloat(rateEl?.value)||defaultHstRate();
   const amt  = Math.abs(parseFloat(amtEl?.value)||0);
   let hst = parseFloat(hstEl.value)||0;
   if(type==='inclusive')  hst = parseFloat((amt - amt/(1+rate/100)).toFixed(2));
@@ -5691,9 +5788,9 @@ Transactions: ${JSON.stringify(items)}`}]})
 // Export shareholder entries to CSV
 function exportShCsv() {
   const rows=[['Date','Shareholder','Description','Category','Amount','HST','Status','Reimbursed Date','Notes']];
-  shEntries.forEach(e=>rows.push([e.date,`"${e.shareholder}"`,`"${e.description}"`,e.category,
-    e.amount,e.hstAmount||0,e.status,e.reimbursedDate||'',`"${e.notes}"`]));
-  const csv=rows.map(r=>r.join(',')).join('\n');
+  shEntries.forEach(e=>rows.push([e.date,e.shareholder,e.description,e.category,
+    e.amount,e.hstAmount||0,e.status,e.reimbursedDate||'',e.notes]));
+  const csv=rows.map(csvRow).join('\n');
   const a=document.createElement('a');
   a.href='data:text/csv;charset=utf-8,'+encodeURIComponent(csv);
   a.download='shareholder-expenses.csv'; a.click();
@@ -5734,7 +5831,7 @@ function addInvoice() {
     description: '',
     category: 'Sales Revenue',
     subtotal: 0,
-    hstRate: 13,
+    hstRate: defaultHstRate(),
     hstType: 'none',
     hstAmount: 0,
     total: 0,
@@ -5805,7 +5902,7 @@ function renderInvoices() {
   const cf = document.getElementById('inv-client-filter');
   const curCli = cf.value;
   cf.innerHTML = '<option value="">All Clients</option>' +
-    clients.map(c=>`<option${c===curCli?' selected':''}>${c}</option>`).join('');
+    clients.map(c=>`<option${c===curCli?' selected':''}>${esc(c)}</option>`).join('');
 
   if(!filtered.length) {
     tbody.innerHTML = `<tr><td colspan="9"><div class="empty-state">
@@ -5829,11 +5926,11 @@ function renderInvoices() {
     const isSel = invSelectedIds.has(inv.id);
     return `<tr class="tx-row${isSel?' selected':''}" data-id="${inv.id}">
       <td><input type="checkbox" ${isSel?'checked':''} onchange="toggleInvSelect('${inv.id}')" onclick="event.stopPropagation()"></td>
-      <td style="font-size:12px;white-space:nowrap;color:var(--text2)">${inv.invoiceNum}</td>
+      <td style="font-size:12px;white-space:nowrap;color:var(--text2)">${esc(inv.invoiceNum)}</td>
       <td style="font-size:12px;white-space:nowrap;color:var(--text2)">${fmtDate(inv.date)}</td>
       <td style="font-size:12px;white-space:nowrap;color:${eff==='overdue'?'var(--danger)':'var(--text2)'}">${fmtDate(inv.dueDate)}</td>
-      <td style="font-size:13px">${inv.client||'<em style="color:var(--text3)">No client</em>'}</td>
-      <td class="tx-desc">${inv.description||'<em style="color:var(--text3)">No description</em>'}</td>
+      <td style="font-size:13px">${esc(inv.client)||'<em style="color:var(--text3)">No client</em>'}</td>
+      <td class="tx-desc">${esc(inv.description)||'<em style="color:var(--text3)">No description</em>'}</td>
       <td style="text-align:right;font-size:12px">${fmt(parseFloat(inv.subtotal)||0)}</td>
       <td style="text-align:right;font-size:12px;color:var(--text2)">${(parseFloat(inv.hstAmount)||0)>0?fmt(inv.hstAmount):'—'}</td>
       <td style="text-align:right;font-weight:500">${fmt(parseFloat(inv.total)||0)}</td>
@@ -5868,7 +5965,7 @@ function renderInvoices() {
 function renderInvEditRow(inv) {
   const catOpts = ['Sales Revenue','Service Revenue','Cost of Goods Sold','Uncategorized']
     .concat(CATEGORIES.filter(c=>!['Sales Revenue','Service Revenue','Cost of Goods Sold','Uncategorized'].includes(c)))
-    .map(c=>`<option${c===inv.category?' selected':''}>${c}</option>`).join('');
+    .map(c=>`<option${c===inv.category?' selected':''}>${esc(c)}</option>`).join('');
   const hstType = inv.hstType||'none';
   const eff = autoInvStatus(inv);
 
@@ -5876,7 +5973,7 @@ function renderInvEditRow(inv) {
     <td colspan="9">
       <div style="display:grid;grid-template-columns:120px 120px 120px 1fr 1fr;gap:8px;margin-bottom:8px">
         <div><div class="edit-label">Invoice #</div>
-          <input class="edit-input" value="${inv.invoiceNum}"
+          <input class="edit-input" value="${esc(inv.invoiceNum)}"
             oninput="event.stopPropagation();updateInvField('${inv.id}','invoiceNum',this.value)" style="font-size:12px"></div>
         <div><div class="edit-label">Date</div>
           <input class="edit-input" type="date" value="${inv.date}"
@@ -5885,10 +5982,10 @@ function renderInvEditRow(inv) {
           <input class="edit-input" type="date" value="${inv.dueDate}"
             onchange="event.stopPropagation();updateInvField('${inv.id}','dueDate',this.value)"></div>
         <div><div class="edit-label">Client</div>
-          <input class="edit-input" value="${inv.client}"
+          <input class="edit-input" value="${esc(inv.client)}"
             oninput="event.stopPropagation();updateInvField('${inv.id}','client',this.value)" placeholder="Client name"></div>
         <div><div class="edit-label">Description</div>
-          <input class="edit-input" value="${inv.description}"
+          <input class="edit-input" value="${esc(inv.description)}"
             oninput="event.stopPropagation();updateInvField('${inv.id}','description',this.value)" placeholder="Services / goods description"></div>
       </div>
       <div style="display:grid;grid-template-columns:1fr 120px 1fr 100px 140px;gap:8px;margin-bottom:10px">
@@ -5993,10 +6090,10 @@ function bulkDeleteInv() {
 function exportInvCsv() {
   const rows=[['Invoice#','Date','Due Date','Client','Description','Category','Subtotal','HST','Total']];
   invoices.forEach(inv=>{
-    rows.push([inv.invoiceNum,inv.date,inv.dueDate,`"${inv.client}"`,`"${inv.description}"`,
+    rows.push([inv.invoiceNum,inv.date,inv.dueDate,inv.client,inv.description,
       inv.category,inv.subtotal,inv.hstAmount||0,inv.total]);
   });
-  const csv=rows.map(r=>r.join(',')).join('\n');
+  const csv=rows.map(csvRow).join('\n');
   const a=document.createElement('a');
   a.href='data:text/csv;charset=utf-8,'+encodeURIComponent(csv);
   a.download='invoices.csv'; a.click();
@@ -6075,7 +6172,7 @@ function exportGifiCsv() {
   Object.keys(s100).sort().forEach(code => {
     rows.push(['100 Balance Sheet', code, s100[code].accounts.join('; '), s100[code].amount.toFixed(2)]);
   });
-  const csv = rows.map(r=>r.map(c=>`"${String(c).replace(/"/g,'""')}"`).join(',')).join('\n');
+  const csv = rows.map(csvRow).join('\n');
   const corp = (companyConfig.corpName||'Ledger').replace(/[^a-z0-9]/gi,'_');
   const a = document.createElement('a');
   a.href = 'data:text/csv;charset=utf-8,' + encodeURIComponent(csv);
@@ -6097,7 +6194,7 @@ function renderRecon() {
   // Populate account dropdown
   const acctSel = document.getElementById('recon-account');
   if(acctSel && !acctSel.dataset.init) {
-    acctSel.innerHTML = ACCOUNTS.map(a=>`<option>${a}</option>`).join('');
+    acctSel.innerHTML = ACCOUNTS.map(a=>`<option>${esc(a)}</option>`).join('');
     acctSel.dataset.init = '1';
   }
   const account = acctSel?.value || ACCOUNTS[0];
@@ -6163,8 +6260,8 @@ function renderRecon() {
         <input type="checkbox" ${checked} onchange="reconToggle('${t.id}')" style="cursor:pointer;width:16px;height:16px">
       </td>
       <td style="padding:7px 8px;font-size:12px;color:var(--text2);white-space:nowrap">${fmtDate(t.date)}</td>
-      <td style="padding:7px 8px;font-size:12px">${t.description||''}</td>
-      <td style="padding:7px 8px;font-size:11px;color:var(--text3)">${t.category}</td>
+      <td style="padding:7px 8px;font-size:12px">${esc(t.description)||''}</td>
+      <td style="padding:7px 8px;font-size:11px;color:var(--text3)">${esc(t.category)}</td>
       <td style="padding:7px 8px;text-align:right;font-size:12px;color:${t.amount<0?'var(--danger)':'var(--text)'}">${fmt(t.amount)}</td>
       <td style="padding:7px 8px;text-align:right;font-size:11px;color:var(--text3)">${ticks[t.id]?'Cleared':'—'}</td>
     </tr>`;
@@ -6230,7 +6327,7 @@ function renderAR() {
   const cf = document.getElementById('ar-client-filter');
   const curClient = cf.value;
   cf.innerHTML = '<option value="">All Clients</option>' +
-    clientNames.map(c => `<option${c===curClient?' selected':''}>${c}</option>`).join('');
+    clientNames.map(c => `<option${c===curClient?' selected':''}>${esc(c)}</option>`).join('');
 
   // Build events
   const events = [];
@@ -6238,15 +6335,16 @@ function renderAR() {
     const client = inv.client || '(No Client)';
     if(clientFilter && client !== clientFilter) return;
     const amt = parseFloat(inv.total)||0;
-    events.push({
+    const invEvent = {
       date: inv.date || '',
       client,
       type: 'invoice',
       ref: inv.invoiceNum || '',
-      desc: inv.description || 'Sales invoice',
+      desc: esc(inv.description) || 'Sales invoice',
       dr: amt, cr: 0,
       invId: inv.id,
-    });
+    };
+    events.push(invEvent);
     // Linked payment transactions for this invoice
     const linkedPays = transactions.filter(t=>t.linkedInvoiceId===inv.id);
     let linkedTotal = 0;
@@ -6258,33 +6356,18 @@ function renderAR() {
         client,
         type: 'payment',
         ref: inv.invoiceNum || '',
-        desc: t.description || `Payment received (${t.account||''})`,
+        desc: esc(t.description) || `Payment received (${esc(t.account)||''})`,
         dr: 0, cr: pay,
         txId: t.id,
       });
     });
-    // Fallback: invoice settled (paid/partial) via status — generate a receipt line so the
-    // ledger reflects the money received, even if no bank transaction was linked.
+    // 'Paid' is a display label only — A/R clears solely via linked bank/cash transactions, so the
+    // subledger matches the general ledger and the bank reconciliation. If an invoice is marked
+    // paid/partial but its linked payments don't cover it, flag it so the user knows to link the
+    // deposit; A/R deliberately stays open until they do.
     const effStatus = autoInvStatus(inv);           // robust: considers status field + linked tx
-    if(effStatus === 'paid' && linkedTotal < amt - 0.01) {
-      events.push({
-        date: inv.paidDate || inv.dueDate || inv.date || '',
-        client, type: 'payment', ref: inv.invoiceNum || '',
-        desc: 'Payment received',
-        dr: 0, cr: amt - linkedTotal,
-        invId: inv.id,
-      });
-    } else if(effStatus === 'partial') {
-      const declared = parseFloat(inv.paidAmount)||0;
-      if(declared > linkedTotal + 0.01) {
-        events.push({
-          date: inv.paidDate || inv.date || '',
-          client, type: 'payment', ref: inv.invoiceNum || '',
-          desc: 'Partial payment received',
-          dr: 0, cr: declared - linkedTotal,
-          invId: inv.id,
-        });
-      }
+    if((effStatus === 'paid' || effStatus === 'partial') && linkedTotal < amt - 0.01) {
+      invEvent.desc += ` <span style="color:var(--warning);font-size:10px;font-weight:500">⚠ marked ${effStatus} — link a deposit to clear A/R</span>`;
     }
   });
 
@@ -6295,14 +6378,13 @@ function renderAR() {
     return (a.type==='invoice'?0:1) - (b.type==='invoice'?0:1);
   });
 
-  // Summary metrics (always reflect the full picture, not the filter)
-  const invPaid = inv => {
-    const linked = transactions.filter(t=>t.linkedInvoiceId===inv.id).reduce((p,t)=>p+Math.abs(parseFloat(t.amount)||0),0);
-    const total = parseFloat(inv.total)||0;
-    if(inv.status==='paid') return Math.max(linked, total);
-    if(inv.status==='partial') return Math.max(linked, parseFloat(inv.paidAmount)||0);
-    return linked;
-  };
+  // Summary metrics (always reflect the full picture, not the filter).
+  // "Collected" = cash actually recorded against the invoice, i.e. linked bank/cash transactions
+  // only. A "paid" label with no linked deposit does NOT count as collected — A/R stays open until
+  // the deposit is linked, so these cards agree with the running balance and the general ledger.
+  const invPaid = inv => transactions
+    .filter(t=>t.linkedInvoiceId===inv.id)
+    .reduce((p,t)=>p+Math.abs(parseFloat(t.amount)||0),0);
   const totalInvoiced  = liveInvoices.reduce((s,i)=>s+(parseFloat(i.total)||0),0);
   const totalCollected = liveInvoices.reduce((s,i)=>s+invPaid(i),0);
   const totalOutstanding = liveInvoices.reduce((s,i)=>s + Math.max(0,(parseFloat(i.total)||0)-invPaid(i)),0);
@@ -6347,8 +6429,8 @@ function renderAR() {
       : (e.txId ? `onclick="glDrillToTx('${e.txId}')" style="cursor:pointer"` : '');
     return `<tr ${clickAttr} title="${isInv?'View in Invoices':'View transaction'}" style="background:${rowBg}">
       <td style="padding:8px 10px;border-bottom:1px solid var(--border);font-size:12px;color:var(--text2);white-space:nowrap">${fmtDate(e.date)}</td>
-      <td style="padding:8px 10px;border-bottom:1px solid var(--border);font-size:12px;color:var(--text2);white-space:nowrap">${e.client}</td>
-      <td style="padding:8px 10px;border-bottom:1px solid var(--border);font-size:12px;color:var(--text2);white-space:nowrap">${e.ref}</td>
+      <td style="padding:8px 10px;border-bottom:1px solid var(--border);font-size:12px;color:var(--text2);white-space:nowrap">${esc(e.client)}</td>
+      <td style="padding:8px 10px;border-bottom:1px solid var(--border);font-size:12px;color:var(--text2);white-space:nowrap">${esc(e.ref)}</td>
       <td style="padding:8px 10px;border-bottom:1px solid var(--border);font-size:12px;max-width:240px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">
         ${isInv?'':'<span style="color:var(--text3)">↳ </span>'}${e.desc}
       </td>
@@ -6365,7 +6447,7 @@ function renderAR() {
       </tr></thead>
       <tbody>${rows}</tbody>
       <tfoot><tr style="background:var(--surface2)">
-        <td colspan="4" style="padding:10px;font-weight:500;font-size:12px;border-top:2px solid var(--border2)">Closing AR Balance${clientFilter?` — ${clientFilter}`:''}</td>
+        <td colspan="4" style="padding:10px;font-weight:500;font-size:12px;border-top:2px solid var(--border2)">Closing AR Balance${clientFilter?` — ${esc(clientFilter)}`:''}</td>
         <td style="padding:10px;text-align:right;font-weight:500;font-size:12px;border-top:2px solid var(--border2);color:var(--danger)">${fmt(displayEvents.reduce((s,e)=>s+e.dr,0))}</td>
         <td style="padding:10px;text-align:right;font-weight:500;font-size:12px;border-top:2px solid var(--border2);color:var(--accent)">${fmt(displayEvents.reduce((s,e)=>s+e.cr,0))}</td>
         <td style="padding:10px;text-align:right;font-weight:500;font-size:13px;border-top:2px solid var(--border2);color:${running>0.01?'var(--danger)':'var(--accent)'}">${fmt(running)}</td>
@@ -6383,13 +6465,16 @@ function getShLedgerEntries() {
   const ledger = {};
   const ensure = name => { if(!ledger[name]) ledger[name]={debit:0,credit:0}; };
   shEntries.forEach(e => {
-    const amt = Math.abs(e.amount);
+    const amt = Math.abs(parseFloat(e.amount)||0);
     if(!amt) return;
+    const hst = Math.min(Math.max(parseFloat(e.hstAmount)||0, 0), amt); // ITC portion, clamped
+    const net = amt - hst;
     const cat = (e.category==='Uncategorized') ? 'Office Expenses' : e.category;
     ensure(cat);
     ensure('Due to Shareholder');
-    // DR Expense account / CR Due to Shareholder (liability)
-    ledger[cat].debit += amt;
+    // DR Expense (net of HST) + DR GST/HST Payable (ITC) / CR Due to Shareholder (gross owed back)
+    ledger[cat].debit += net;
+    if(hst > 0) { ensure('GST/HST Payable'); ledger['GST/HST Payable'].debit += hst; }
     ledger['Due to Shareholder'].credit += amt;
   });
   return ledger;
@@ -6717,7 +6802,7 @@ function hoPostToShareholder() {
                 : 'Office Expenses',
         amount: parseFloat(bizAmt.toFixed(2)),
         hstAmount: hst,
-        hstRate: 13,
+        hstRate: defaultHstRate(),
         hstType: row.hst ? 'inclusive' : 'none',
         notes: `${(pct*100).toFixed(1)}% business use`,
         status: 'pending'
@@ -6756,7 +6841,7 @@ function hoExport() {
     rows.push([row.label, ...vals.map(v=>v||0), rowTotal.toFixed(2), rowBiz.toFixed(2), rowHst.toFixed(2), rowNet.toFixed(2)]);
   });
 
-  const csv = rows.map(r=>r.join(',')).join('\n');
+  const csv = rows.map(csvRow).join('\n');
   const a = document.createElement('a');
   a.href = 'data:text/csv;charset=utf-8,'+encodeURIComponent(csv);
   a.download = `home-office-${yr}.csv`;
@@ -6822,13 +6907,14 @@ function addAsset() {
   assetStartEdit(asset.id);
 }
 
-function calcCCA(asset, yr) {
+function calcCCA(asset, yr, openingOverride) {
   // Get or init year data
-  const yd = asset.years[yr] || { openingUCC:0, additions:0, disposals:0, ccaClaimed:0 };
+  const yd = (asset.years||{})[yr] || { openingUCC:0, additions:0, disposals:0, ccaClaimed:0 };
   const cls = CCA_CLASSES[asset.ccaClass];
   const rate = cls?.rate || 0;
 
-  const openUCC  = parseFloat(yd.openingUCC)||0;
+  // openingOverride lets calcCCAseries() carry the prior year's closing UCC into this year.
+  const openUCC  = (openingOverride!=null) ? (parseFloat(openingOverride)||0) : (parseFloat(yd.openingUCC)||0);
   const adds     = parseFloat(yd.additions)||0;
   const disps    = parseFloat(yd.disposals)||0;
 
@@ -6851,6 +6937,42 @@ function calcCCA(asset, yr) {
   const closeUCC = adjUCC - actualCCA;
 
   return { openUCC, adds, disps, adjUCC, uccForCCA, maxCCA, actualCCA, closeUCC, rate, isAcqYear };
+}
+
+// The reporting year that the (continuous, multi-year) file accumulates CCA THROUGH. Prefer the
+// configured fiscal year-end, else the latest year present in any asset's data, else this calendar year.
+function ccaThroughYear() {
+  const fy = companyConfig?.fyEnd ? parseInt(String(companyConfig.fyEnd).slice(0,4)) : null;
+  let maxData = 0;
+  (fixedAssets||[]).forEach(a => Object.keys(a.years||{}).forEach(y => { const n=parseInt(y); if(n>maxData) maxData=n; }));
+  return String(fy || maxData || new Date().getFullYear());
+}
+
+// Walk an asset's years in chronological order, carrying each year's CLOSING UCC into the next
+// year's OPENING UCC automatically (so last year's closing flows into next year). Returns the
+// per-year results and the CUMULATIVE CCA claimed from the asset's first year THROUGH `throughYear`.
+// The first year honours any opening UCC entered on it (UCC brought in before the file began);
+// every later year is carried forward.
+function calcCCAseries(asset, throughYear) {
+  const through = parseInt(throughYear);
+  const ys = Object.keys(asset.years||{}).map(Number).filter(y=>!isNaN(y)).sort((a,b)=>a-b);
+  let carry = null, cumulative = 0;
+  const byYear = {};
+  ys.forEach(y => {
+    if(y > through) return;
+    const c = calcCCA(asset, String(y), carry); // carry===null on the first year → uses entered opening UCC
+    byYear[y] = c;
+    cumulative += c.actualCCA;
+    carry = c.closeUCC;
+  });
+  return { byYear, cumulative, closingUCC: carry==null?0:carry, throughYear: through };
+}
+
+// One display year's CCA result WITH the carried-forward opening UCC (so the Fixed Assets module
+// shows last year's closing UCC flowing into this year's opening). Falls back to the standalone
+// calc for a year that isn't in the asset's data.
+function calcCCAfor(asset, yr) {
+  return calcCCAseries(asset, yr).byYear[parseInt(yr)] || calcCCA(asset, yr);
 }
 
 function renderAssets() {
@@ -6884,7 +7006,7 @@ function renderAssets() {
   tbody.innerHTML = fixedAssets.map(asset => {
     if(asset.id === assetEditId) return renderAssetEditRow(asset, yr);
     const cls = CCA_CLASSES[asset.ccaClass];
-    const c = calcCCA(asset, yr);
+    const c = calcCCAfor(asset, yr);
     totCost      += parseFloat(asset.cost)||0;
     totOpenUCC   += c.openUCC;
     totAdds      += c.adds;
@@ -6893,7 +7015,7 @@ function renderAssets() {
     totCloseUCC  += c.closeUCC;
 
     return `<tr class="tx-row" data-id="${asset.id}">
-      <td style="font-size:13px;font-weight:500">${asset.name||'<em style="color:var(--text3)">No name</em>'}</td>
+      <td style="font-size:13px;font-weight:500">${esc(asset.name)||'<em style="color:var(--text3)">No name</em>'}</td>
       <td><span class="badge">${asset.ccaClass}</span></td>
       <td style="font-size:12px;color:var(--text2)">${((cls?.rate||0)*100).toFixed(0)}%</td>
       <td style="font-size:12px;color:var(--text2);white-space:nowrap">${fmtDate(asset.acquiredDate)}</td>
@@ -6933,9 +7055,14 @@ function renderAssets() {
 }
 
 function renderAssetEditRow(asset, yr) {
+  if(!asset.years) asset.years = {};
   if(!asset.years[yr]) asset.years[yr] = {openingUCC:0,additions:0,disposals:0,ccaClaimed:0};
   const yd  = asset.years[yr];
-  const c   = calcCCA(asset, yr);
+  const c   = calcCCAfor(asset, yr);
+  // Opening UCC is user-entered for the asset's FIRST year (UCC brought in before the file began),
+  // and carried forward (read-only) for every later year.
+  const _ay = Object.keys(asset.years||{}).map(Number).filter(n=>!isNaN(n)).sort((a,b)=>a-b);
+  const isFirstYear = !_ay.length || parseInt(yr) <= _ay[0];
   const clsOpts = Object.entries(CCA_CLASSES).map(([k,v])=>
     `<option value="${k}"${asset.ccaClass===k?' selected':''}>Class ${k} — ${v.desc.substring(0,35)} (${v.rate!=null?(v.rate*100).toFixed(0)+'%':'SL'})</option>`
   ).join('');
@@ -6944,7 +7071,7 @@ function renderAssetEditRow(asset, yr) {
     <td colspan="11" style="padding:14px 16px">
       <div style="display:grid;grid-template-columns:1fr 1fr 140px;gap:8px;margin-bottom:10px">
         <div><div class="edit-label">Asset Name</div>
-          <input class="edit-input" value="${asset.name}"
+          <input class="edit-input" value="${esc(asset.name)}"
             oninput="event.stopPropagation();updateAssetField('${asset.id}','name',this.value)" placeholder="e.g. MacBook Pro, Toyota Camry"></div>
         <div><div class="edit-label">CCA Class</div>
           <select class="edit-input" onchange="event.stopPropagation();updateAssetField('${asset.id}','ccaClass',this.value)">${clsOpts}</select></div>
@@ -6956,9 +7083,13 @@ function renderAssetEditRow(asset, yr) {
         <div><div class="edit-label">Original Cost</div>
           <input class="edit-input" type="number" step="0.01" value="${asset.cost||0}"
             oninput="event.stopPropagation();updateAssetField('${asset.id}','cost',this.value)"></div>
-        <div><div class="edit-label">Opening UCC (${yr})</div>
-          <input class="edit-input" type="number" step="0.01" value="${yd.openingUCC||0}"
-            oninput="event.stopPropagation();updateAssetYearField('${asset.id}','${yr}','openingUCC',this.value)"></div>
+        <div><div class="edit-label">Opening UCC (${yr})${isFirstYear?'':' <span style="color:var(--text3)">↻ carried</span>'}</div>
+          ${isFirstYear
+            ? `<input class="edit-input" type="number" step="0.01" value="${yd.openingUCC||0}"
+                 oninput="event.stopPropagation();updateAssetYearField('${asset.id}','${yr}','openingUCC',this.value)">`
+            : `<input class="edit-input" type="number" step="0.01" value="${(c.openUCC||0).toFixed(2)}" readonly
+                 title="Carried forward automatically from last year's closing UCC"
+                 style="background:var(--surface2);color:var(--text2)">`}</div>
         <div><div class="edit-label">Additions (${yr})</div>
           <input class="edit-input" type="number" step="0.01" value="${yd.additions||0}"
             oninput="event.stopPropagation();updateAssetYearField('${asset.id}','${yr}','additions',this.value)"></div>
@@ -6971,7 +7102,7 @@ function renderAssetEditRow(asset, yr) {
             placeholder="${c.maxCCA.toFixed(2)}"
             oninput="event.stopPropagation();updateAssetYearField('${asset.id}','${yr}','ccaClaimed',this.value)"></div>
         <div><div class="edit-label">Notes</div>
-          <input class="edit-input" value="${asset.notes||''}"
+          <input class="edit-input" value="${esc(asset.notes)}"
             oninput="event.stopPropagation();updateAssetField('${asset.id}','notes',this.value)"></div>
       </div>
       <div style="background:var(--surface2);border-radius:var(--radius);padding:10px 14px;margin-bottom:10px;font-size:12px;display:flex;gap:24px;flex-wrap:wrap">
@@ -7016,7 +7147,7 @@ function updateAssetYearField(id, yr, field, value) {
   // Update the calc summary live
   const asset = fixedAssets.find(a=>a.id===id);
   if(asset) {
-    const c = calcCCA(asset, yr);
+    const c = calcCCAfor(asset, yr);
     const row = document.querySelector(`.edit-row[data-id="${id}"] div[style*="background:var(--surface2)"]`);
     if(row) row.innerHTML = `
       <span>Adj. UCC: <strong>${fmt(c.adjUCC)}</strong></span>
@@ -7052,7 +7183,7 @@ function renderCCASchedule(yr) {
     const rate = info?.rate||0;
     let clsOpen=0,clsAdds=0,clsDisps=0,clsCCA=0,clsClose=0;
     assets.forEach(a => {
-      const c = calcCCA(a, yr);
+      const c = calcCCAfor(a, yr);
       clsOpen  += c.openUCC;
       clsAdds  += c.adds;
       clsDisps += c.disps;
@@ -7095,12 +7226,12 @@ function exportAssetsCsv() {
   fixedAssets.forEach(a => {
     const c = calcCCA(a, yr);
     const info = CCA_CLASSES[a.ccaClass];
-    rows.push([`"${a.name}"`, a.ccaClass, `"${info?.desc||''}"`,
+    rows.push([a.name, a.ccaClass, info?.desc||'',
       info?.rate!=null?(info.rate*100).toFixed(0)+'%':'S/L',
       a.acquiredDate, a.cost, c.openUCC, c.adds, c.disps,
-      c.maxCCA.toFixed(2), c.actualCCA.toFixed(2), Math.max(0,c.closeUCC).toFixed(2), `"${a.notes||''}"`]);
+      c.maxCCA.toFixed(2), c.actualCCA.toFixed(2), Math.max(0,c.closeUCC).toFixed(2), a.notes||'']);
   });
-  const csv = rows.map(r=>r.join(',')).join('\n');
+  const csv = rows.map(csvRow).join('\n');
   const a2 = document.createElement('a');
   a2.href = 'data:text/csv;charset=utf-8,'+encodeURIComponent(csv);
   a2.download = `fixed-assets-cca-${yr}.csv`;
@@ -7223,7 +7354,7 @@ function renderClientSwitcher() {
                padding:8px 10px;cursor:pointer;font-size:12px;color:var(--text)">
         <span style="display:flex;align-items:center;gap:6px;overflow:hidden">
           <span style="width:7px;height:7px;border-radius:50%;background:var(--accent);flex-shrink:0"></span>
-          <span style="font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${active?.name||'Select client'}</span>
+          <span style="font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(active?.name)||'Select client'}</span>
         </span>
         <span style="color:var(--text3);font-size:10px">▼</span>
       </button>
@@ -7235,7 +7366,7 @@ function renderClientSwitcher() {
                ${c.id===activeId?'background:var(--accent-light)':''};border-bottom:1px solid var(--border)">
             <span onclick="switchClient('${c.id}');document.getElementById('client-dropdown').classList.remove('show')"
               style="flex:1;cursor:pointer;font-size:12px;font-weight:${c.id===activeId?'600':'400'}">
-              ${c.name}
+              ${esc(c.name)}
             </span>
             <span style="display:flex;gap:4px">
               <button onclick="renameClient('${c.id}')" title="Rename"
@@ -7303,37 +7434,72 @@ function restoreBackup(input) {
       const backup = JSON.parse(e.target.result);
 
       // Validate structure
-      if(!backup.data || !backup.version) {
+      if(!backup || typeof backup !== 'object' || !backup.data || !backup.version || typeof backup.data !== 'object') {
         toast('❌ Invalid backup file — not a Ledger backup');
-        return;
+        input.value=''; return;
       }
 
       const d = backup.data;
+
+      // ── Type-validate EVERY field before touching live data ──
+      // A malformed/truncated backup must NOT be allowed to overwrite (and then persist over)
+      // the user's real data. If anything is the wrong shape, abort with data unchanged.
+      const isObj = v => v && typeof v === 'object' && !Array.isArray(v);
+      const bad = [];
+      [['transactions',Array.isArray],['openingBalances',Array.isArray],['shEntries',Array.isArray],
+       ['invoices',Array.isArray],['fixedAssets',Array.isArray],['adjustingEntries',Array.isArray],
+       ['companyConfig',isObj],['hoData',isObj]].forEach(([k,ok]) => {
+        if(d[k] !== undefined && !ok(d[k])) bad.push(k);
+      });
+      if(d.invNextNum !== undefined && !(typeof d.invNextNum==='number' || /^\d+$/.test(String(d.invNextNum)))) bad.push('invNextNum');
+      if(bad.length) {
+        toast(`❌ Backup looks corrupted (bad: ${bad.join(', ')}) — restore cancelled, your data is unchanged`);
+        input.value=''; return;
+      }
+
       const txCount    = d.transactions?.length || 0;
       const invCount   = d.invoices?.length || 0;
       const shCount    = d.shEntries?.length || 0;
       const exportDate = backup.exportedAt ? new Date(backup.exportedAt).toLocaleDateString('en-CA') : 'unknown';
+      const backupClient = backup.clientName || 'Unknown';
+      const activeClient = companyConfig.corpName || 'the current client';
+      const mismatch = backupClient && activeClient && backupClient !== activeClient;
 
-      const msg = `Restore backup from ${exportDate}?\n\nThis will REPLACE all current data with:\n• ${txCount} transactions\n• ${invCount} invoices\n• ${shCount} shareholder entries\n\nCurrent data will be lost. Continue?`;
+      const msg = `Restore backup from ${exportDate}?\n\n`
+        + `Backup is for client:  "${backupClient}"\n`
+        + `Active client (will be overwritten):  "${activeClient}"\n\n`
+        + `Replaces the ACTIVE client's data with:\n• ${txCount} transactions\n• ${invCount} invoices\n• ${shCount} shareholder entries\n\n`
+        + (mismatch ? `⚠ The backup client does NOT match the active client — make sure you are restoring into the right client, or switch clients first.\n\n` : '')
+        + `The active client's current data will be permanently overwritten. Continue?`;
 
       if(!confirm(msg)) { input.value=''; return; }
 
-      // Restore all data
-      if(d.transactions)    transactions    = d.transactions;
-      if(d.openingBalances) openingBalances = d.openingBalances;
-      if(d.shEntries)       shEntries       = d.shEntries;
-      if(d.invoices)        invoices        = d.invoices;
-      if(d.invNextNum)      invNextNum      = d.invNextNum;
-      if(d.hoData)          hoData          = d.hoData;
-      if(d.fixedAssets)        fixedAssets        = d.fixedAssets;
-      if(d.companyConfig)      companyConfig      = d.companyConfig;
-      if(d.adjustingEntries)   adjustingEntries   = d.adjustingEntries;
+      // Snapshot current in-memory state so a failure while applying can be rolled back this session.
+      const prev = { transactions, openingBalances, shEntries, invoices, invNextNum, hoData, fixedAssets, companyConfig, adjustingEntries };
+      try {
+        // Restore all data (use !== undefined so legit values like invNextNum:0 / empty arrays apply)
+        if(d.transactions    !== undefined) transactions    = d.transactions;
+        if(d.openingBalances !== undefined) openingBalances = d.openingBalances;
+        if(d.shEntries       !== undefined) shEntries       = d.shEntries;
+        if(d.invoices        !== undefined) invoices        = d.invoices;
+        if(d.invNextNum      !== undefined) invNextNum      = parseInt(d.invNextNum)||1;
+        if(d.hoData          !== undefined) hoData          = d.hoData;
+        if(d.fixedAssets     !== undefined) fixedAssets     = d.fixedAssets;
+        if(d.companyConfig   !== undefined) companyConfig   = d.companyConfig;
+        if(d.adjustingEntries!== undefined) adjustingEntries= d.adjustingEntries;
 
-      refreshAccountSets();
-      save();
-      renderAll();
-      updateBackupStatus();
-      toast(`✓ Restored ${txCount} transactions, ${invCount} invoices, ${shCount} shareholder entries from ${exportDate}`);
+        refreshAccountSets();
+        save();
+        renderAll();
+        updateBackupStatus();
+        toast(`✓ Restored ${txCount} transactions, ${invCount} invoices, ${shCount} shareholder entries from ${exportDate}`);
+      } catch(applyErr) {
+        // Roll back so the user does not lose their prior data within this session
+        ({ transactions, openingBalances, shEntries, invoices, invNextNum, hoData, fixedAssets, companyConfig, adjustingEntries } = prev);
+        console.error(applyErr);
+        try { refreshAccountSets(); renderAll(); } catch(_) {}
+        toast('❌ Restore failed while applying — reverted to your previous data');
+      }
     } catch(err) {
       console.error(err);
       toast('❌ Failed to read backup file — may be corrupted');
@@ -7606,7 +7772,7 @@ function cfgRenderShareholders() {
     <div style="display:grid;grid-template-columns:1fr 140px 80px 120px 36px;gap:8px;margin-bottom:8px;align-items:end" id="sh-cfg-${sh.id}">
       <div>
         ${i===0?'<div class="edit-label">Full Name</div>':''}
-        <input class="edit-input" value="${sh.name||''}" placeholder="Full legal name"
+        <input class="edit-input" value="${esc(sh.name)}" placeholder="Full legal name"
           oninput="cfgUpdateShareholder('${sh.id}','name',this.value)" style="font-size:12px;width:100%">
       </div>
       <div>
@@ -7675,7 +7841,7 @@ function cfgRenderCustomLedgers() {
     <div style="display:grid;grid-template-columns:1fr 140px 180px 36px;gap:8px;margin-bottom:8px;align-items:end">
       <div>
         ${i===0?'<div class="edit-label">Ledger Name</div>':''}
-        <input class="edit-input" value="${l.name||''}" placeholder="e.g. Vehicle Expenses"
+        <input class="edit-input" value="${esc(l.name)}" placeholder="e.g. Vehicle Expenses"
           oninput="cfgUpdateCustomLedger('${l.id}','name',this.value)" style="font-size:12px;width:100%">
       </div>
       <div>
@@ -7740,7 +7906,7 @@ function txRenderOpeningBalances() {
     const val = isCreditCard ? -(dr - cr) : (dr - cr);
     const hasVal = val !== 0;
     return `<label style="display:flex;align-items:center;gap:5px;font-size:11px;color:var(--text2)">
-      <span style="white-space:nowrap;font-weight:${hasVal?'500':'400'}">${acc}</span>
+      <span style="white-space:nowrap;font-weight:${hasVal?'500':'400'}">${esc(acc)}</span>
       <input type="number" step="0.01"
         id="tx-ob-${acc.replace(/\W/g,'_')}"
         value="${hasVal ? val.toFixed(2) : ''}"
@@ -7776,7 +7942,12 @@ function txSaveOpeningBalances() {
     }
   });
   save(); txRenderOpeningBalances(); renderTransactions();
-  toast('✓ Opening balances saved');
+  const totDr = openingBalances.reduce((s,o)=>s+(parseFloat(o.debit)||0),0);
+  const totCr = openingBalances.reduce((s,o)=>s+(parseFloat(o.credit)||0),0);
+  const diff = Math.abs(totDr - totCr);
+  toast(diff > 0.01
+    ? `Opening balances saved — out of balance by ${fmt(diff)}; add equity / retained earnings to balance`
+    : '✓ Opening balances saved & balanced');
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -7839,15 +8010,15 @@ function renderAJE() {
         ${li===0 ? `
           <td rowspan="${e.lines.length}" style="vertical-align:top;padding:8px;color:var(--text3);font-size:11px">${e.lines.length>1?e.lines.length+' lines':''}</td>
           <td rowspan="${e.lines.length}" style="vertical-align:top;padding:8px;white-space:nowrap;color:var(--text2)">${fmtDate(e.date)}</td>
-          <td rowspan="${e.lines.length}" style="vertical-align:top;padding:8px;color:var(--text2);font-size:11px">${e.reference||'—'}</td>
-          <td rowspan="${e.lines.length}" style="vertical-align:top;padding:8px">${e.description||''}
+          <td rowspan="${e.lines.length}" style="vertical-align:top;padding:8px;color:var(--text2);font-size:11px">${esc(e.reference)||'—'}</td>
+          <td rowspan="${e.lines.length}" style="vertical-align:top;padding:8px">${esc(e.description)||''}
             ${!balanced?'<span style="color:var(--danger);font-size:10px;margin-left:4px">⚠ Unbalanced</span>':''}
           </td>
           <td rowspan="${e.lines.length}" style="vertical-align:top;padding:8px"><span class="badge badge-ok" style="font-size:10px">${e.type||'Other'}</span></td>
         ` : ''}
-        <td style="padding:6px 8px;text-align:right;font-size:12px;color:var(--text2)">${l.account}</td>
+        <td style="padding:6px 8px;text-align:right;font-size:12px;color:var(--text2)">${esc(l.account)}</td>
         <td style="padding:6px 8px;text-align:right;font-family:var(--mono);font-size:12px;color:var(--accent)">${(parseFloat(l.debit)||0)>0?fmt(parseFloat(l.debit)):'—'}</td>
-        <td style="padding:6px 8px;text-align:right;font-size:12px;color:var(--text2)">${l.account}</td>
+        <td style="padding:6px 8px;text-align:right;font-size:12px;color:var(--text2)">${esc(l.account)}</td>
         <td style="padding:6px 8px;text-align:right;font-family:var(--mono);font-size:12px;color:var(--danger)">${(parseFloat(l.credit)||0)>0?fmt(parseFloat(l.credit)):'—'}</td>
         ${li===0 ? `<td rowspan="${e.lines.length}" style="vertical-align:top;padding:8px;white-space:nowrap">
           <button class="btn btn-sm" onclick="event.stopPropagation();ajeStartEdit('${e.id}')" style="padding:2px 8px;font-size:11px">Edit</button>
@@ -7903,7 +8074,7 @@ function ajeRenderEditRow(e) {
     groups[g] = groups[g].filter(c => { if(seen.has(c)) return false; seen.add(c); return true; });
   });
   const catOpts = Object.entries(groups).map(([grp, accts]) =>
-    accts.length ? `<optgroup label="${grp}">${accts.map(c=>`<option>${c}</option>`).join('')}</optgroup>` : ''
+    accts.length ? `<optgroup label="${esc(grp)}">${accts.map(c=>`<option>${esc(c)}</option>`).join('')}</optgroup>` : ''
   ).join('');
   const typeOpts = ['Accrual','Deferral','Depreciation','Correction','Year-end','Other']
     .map(t=>`<option${e.type===t?' selected':''}>${t}</option>`).join('');
@@ -7911,7 +8082,7 @@ function ajeRenderEditRow(e) {
   const linesHtml = (e.lines||[{account:'',debit:'',credit:''},{account:'',debit:'',credit:''}]).map((l,li)=>`
     <div style="display:grid;grid-template-columns:1fr 130px 130px 32px;gap:8px;margin-bottom:6px;align-items:center">
       <select class="edit-input" style="font-size:12px" onchange="ajeUpdateLine('${e.id}',${li},'account',this.value)">
-        <option value="">— Select account —</option>${catOpts.replace(`<option>${l.account}</option>`,`<option selected>${l.account}</option>`)}
+        <option value="">— Select account —</option>${catOpts.replace(`<option>${esc(l.account)}</option>`,`<option selected>${esc(l.account)}</option>`)}
       </select>
       <input class="edit-input" type="number" step="0.01" placeholder="Debit" value="${l.debit||''}"
         style="font-size:12px;text-align:right;border-color:${(parseFloat(l.debit)||0)>0?'var(--accent)':'var(--border2)'}"
@@ -7937,12 +8108,12 @@ function ajeRenderEditRow(e) {
         </div>
         <div>
           <div class="edit-label">Description</div>
-          <input class="edit-input" value="${e.description||''}" placeholder="e.g. Accrue Dec salaries"
+          <input class="edit-input" value="${esc(e.description)}" placeholder="e.g. Accrue Dec salaries"
             style="font-size:12px;width:100%" oninput="ajeUpdateField('${e.id}','description',this.value)">
         </div>
         <div>
           <div class="edit-label">Reference / Memo</div>
-          <input class="edit-input" value="${e.reference||''}" placeholder="e.g. AJE-001"
+          <input class="edit-input" value="${esc(e.reference)}" placeholder="e.g. AJE-001"
             style="font-size:12px;width:100%" oninput="ajeUpdateField('${e.id}','reference',this.value)">
         </div>
         <div>
@@ -8094,11 +8265,11 @@ function exportAjeCsv() {
   const rows = [['Date','Reference','Description','Type','Account','Debit','Credit']];
   adjustingEntries.forEach(e => {
     (e.lines||[]).forEach(l => {
-      rows.push([e.date, e.reference||'', `"${e.description||''}"`, e.type||'',
+      rows.push([e.date, e.reference||'', e.description||'', e.type||'',
         l.account||'', parseFloat(l.debit)||0, parseFloat(l.credit)||0]);
     });
   });
-  const csv = rows.map(r=>r.join(',')).join('\n');
+  const csv = rows.map(csvRow).join('\n');
   const a = document.createElement('a');
   a.href = 'data:text/csv;charset=utf-8,'+encodeURIComponent(csv);
   a.download = 'journal-entries.csv'; a.click();
@@ -8270,7 +8441,7 @@ function coaRender() {
       <th style="width:60px"></th>
     </tr>
     ${accounts.map(a=>`<tr style="border-bottom:1px solid var(--border)">
-      <td style="padding:7px 8px;font-weight:500">${a.name}</td>
+      <td style="padding:7px 8px;font-weight:500">${esc(a.name)}</td>
       <td style="padding:7px 8px"><span style="color:${typeColors[a.type]||'var(--text2)'};">${a.type}</span></td>
       <td style="padding:7px 8px;color:var(--text3)">${a.group||'—'}</td>
       <td style="padding:7px 8px;color:var(--text3);font-family:var(--mono)">${a.gifi||'—'}</td>
@@ -8308,7 +8479,7 @@ function coaAddAccount(targetId) {
       <div>
         <div class="edit-label">Group</div>
         <select class="edit-input" id="coa-new-group" style="width:100%;font-size:12px">
-          ${groups.map(g=>`<option>${g}</option>`).join('')}
+          ${groups.map(g=>`<option>${esc(g)}</option>`).join('')}
         </select>
       </div>
       <div>
@@ -8402,10 +8573,15 @@ async function exportSingleReport(which) {
       });
       const totalRev = Object.values(revAccts).reduce((s,v)=>s+v,0);
       const cogs = full['Cost of Goods Sold'] ? (full['Cost of Goods Sold'].clDr - full['Cost of Goods Sold'].clCr) : 0;
+      // Shareholder-paid expenses are already merged into expAccts (net) via the ledger. Pull them
+      // out so opExp is company-paid only, then add shTotal back once — matches the on-screen P&L.
+      const shByCat = {};
+      shEntries.forEach(e => { const a=Math.abs(parseFloat(e.amount)||0); const h=Math.min(Math.max(parseFloat(e.hstAmount)||0,0),a); const cat=(e.category==='Uncategorized')?'Office Expenses':e.category; shByCat[cat]=(shByCat[cat]||0)+(a-h); });
+      Object.entries(shByCat).forEach(([cat,v])=>{ if(expAccts[cat]!==undefined){ expAccts[cat]-=v; if(Math.abs(expAccts[cat])<=0.005) delete expAccts[cat]; } });
       const opExp = Object.entries(expAccts).filter(([k])=>k!=='Cost of Goods Sold').reduce((s,[,v])=>s+v,0);
-      const shTotal = shEntries.reduce((s,e)=>s+Math.abs(e.amount),0);
-      const yr = new Date().getFullYear().toString();
-      let totalCCA = 0; fixedAssets.forEach(a=>{ totalCCA += calcCCA(a,yr).actualCCA; });
+      const shTotal = Object.values(shByCat).reduce((s,v)=>s+v,0);
+      const yr = ccaThroughYear();
+      let totalCCA = 0; fixedAssets.forEach(a=>{ totalCCA += calcCCAseries(a,yr).cumulative; });
       const totalOpExp = opExp + shTotal + totalCCA;
       const netBeforeTax = totalRev - Math.max(0,cogs) - totalOpExp;
       const netProfit = netBeforeTax - corpTax;
@@ -8557,10 +8733,18 @@ async function exportToExcel() {
     // ══════════════════════════════
     const effCOA = getEffectiveCOA();
     const revAccts = {}, expAccts = {};
+    let corpTax = 0;
     Object.entries(full).forEach(([name, a]) => {
       if(a.type==='revenue') revAccts[name] = a.clCr - a.clDr;
-      else if(a.type==='expense' && !name.startsWith('Depreciation')) expAccts[name] = a.clDr - a.clCr;
+      else if(a.type==='expense' && !name.startsWith('Depreciation')) {
+        if(name==='Corporate Tax Expense') { corpTax += a.clDr - a.clCr; return; } // shown separately, after tax
+        expAccts[name] = a.clDr - a.clCr;
+      }
     });
+    // Pull shareholder-paid (net) out of expAccts so it isn't double-counted with the shTotal row.
+    const xlShByCat = {};
+    shEntries.forEach(e => { const a=Math.abs(parseFloat(e.amount)||0); const h=Math.min(Math.max(parseFloat(e.hstAmount)||0,0),a); const cat=(e.category==='Uncategorized')?'Office Expenses':e.category; xlShByCat[cat]=(xlShByCat[cat]||0)+(a-h); });
+    Object.entries(xlShByCat).forEach(([cat,v])=>{ if(expAccts[cat]!==undefined){ expAccts[cat]-=v; if(Math.abs(expAccts[cat])<=0.005) delete expAccts[cat]; } });
     const totalRev = Object.values(revAccts).reduce((s,v)=>s+v,0);
     const totalExp = Object.values(expAccts).reduce((s,v)=>s+v,0);
     const cogs = full['Cost of Goods Sold'] ? (full['Cost of Goods Sold'].clDr - full['Cost of Goods Sold'].clCr) : 0;
@@ -8582,18 +8766,26 @@ async function exportToExcel() {
     plRows.push(['OPERATING EXPENSES', '']);
     Object.entries(expAccts).filter(([k])=>k!=='Cost of Goods Sold').sort((a,b)=>b[1]-a[1])
       .forEach(([name, val]) => plRows.push([name, fmtN(val)]));
-    // Shareholder expenses
-    const shTotal = shEntries.reduce((s,e)=>s+Math.abs(e.amount),0);
+    // Shareholder expenses (net of HST — matches the ledger; already removed from expAccts above)
+    const shTotal = Object.values(xlShByCat).reduce((s,v)=>s+v,0);
     if(shTotal > 0) { plRows.push(['Shareholder-Paid Expenses', shTotal]); }
-    // CCA
-    const yr = new Date().getFullYear().toString();
+    // CCA (cumulative to date — matches the ledger & Balance Sheet)
+    const yr = ccaThroughYear();
     let totalCCA = 0;
-    fixedAssets.forEach(a=>{ const c=calcCCA(a,yr); totalCCA+=c.actualCCA; });
+    fixedAssets.forEach(a=>{ totalCCA += calcCCAseries(a,yr).cumulative; });
     if(totalCCA > 0) plRows.push(['CCA Depreciation', totalCCA]);
     const totalExpAll = totalExp + shTotal + totalCCA;
     plRows.push(['Total Operating Expenses', totalExpAll]);
     plRows.push(['']);
-    plRows.push(['NET PROFIT / (LOSS)', totalRev - totalExpAll]);
+    const netBeforeTax = totalRev - totalExpAll;
+    if(corpTax > 0.005) {
+      plRows.push(['Net Income Before Tax', netBeforeTax]);
+      plRows.push(['Corporate Tax Expense', corpTax]);
+      plRows.push(['']);
+      plRows.push(['NET PROFIT / (LOSS) AFTER TAX', netBeforeTax - corpTax]);
+    } else {
+      plRows.push(['NET PROFIT / (LOSS)', netBeforeTax]);
+    }
     addSheet('P&L', plRows);
 
     // ══════════════════════════════
@@ -8880,13 +9072,14 @@ async function exportToExcel() {
         ['Asset Name', 'CCA Class', 'Acquired', 'Cost', 'Opening UCC', 'CCA Rate', 'CCA This Year', 'Closing UCC'],
       ];
       fixedAssets.forEach(asset => {
-        const c = calcCCA(asset, yr);
+        const series = calcCCAseries(asset, yr);
+        const c = series.byYear[parseInt(yr)] || calcCCA(asset, yr);
         faRows.push([
           asset.name, `Class ${asset.ccaClass}`, asset.acquiredDate,
-          n(asset.cost), n(asset.openingUCC||asset.cost),
+          n(asset.cost), n(c.openUCC),
           asset.ccaClass ? c.rate+'%' : '',
           fmtN(c.actualCCA),
-          fmtN(n(asset.openingUCC||asset.cost) - c.actualCCA)
+          fmtN(c.closeUCC)
         ]);
       });
       addSheet('Fixed Assets', faRows);
@@ -8947,7 +9140,7 @@ function cfgReportHeader(reportName) {
     ? `For the period ${fmtDate(c.fyStart)} to ${fmtDate(c.fyEnd)}`
     : c.taxYear ? `Tax Year ${c.taxYear}` : '';
   return `<div style="margin-bottom:20px;padding-bottom:14px;border-bottom:2px solid var(--border2)">
-    <div style="font-family:var(--display);font-size:18px;font-weight:500">${c.corpName}</div>
+    <div style="font-family:var(--display);font-size:18px;font-weight:500">${esc(c.corpName)}</div>
     ${c.bn?`<div style="font-size:11px;color:var(--text3)">BN: ${c.bn}</div>`:''}
     ${c.address?`<div style="font-size:11px;color:var(--text3)">${c.address}</div>`:''}
     <div style="font-family:var(--display);font-size:14px;font-style:italic;color:var(--text2);margin-top:6px">${reportName}</div>
@@ -9895,7 +10088,7 @@ function importPastedData() {
       account: acc,
       notes: '',
       reconciled: false,
-      hstRate: 13,
+      hstRate: defaultHstRate(),
       hstAmount: 0,
       hstType: 'none',
     };
@@ -10040,7 +10233,7 @@ function addInvoiceRows(rows, defaultStatus='sent') {
       description: r.desc || '',
       category: matchCat,
       subtotal: sub,
-      hstRate: sub>0&&hst>0 ? parseFloat(((hst/sub)*100).toFixed(1)) : 13,
+      hstRate: sub>0&&hst>0 ? parseFloat(((hst/sub)*100).toFixed(1)) : defaultHstRate(),
       hstType: hst>0 ? 'manual' : 'none',
       hstAmount: hst,
       total,
