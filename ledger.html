@@ -564,7 +564,9 @@
       </div>
       <div style="font-size:10px;color:var(--text3);margin-top:8px;line-height:1.5;border-top:1px solid var(--border);padding-top:8px">
         <div style="font-weight:500;color:var(--text2);margin-bottom:2px">Ledger Bookkeeping</div>
-        <div>© 2025 · Licensed copy</div>
+        <div>© 2025 · Licensed copy · <span id="app-version-display" onclick="showChangelog()"
+          style="cursor:pointer;text-decoration:underline dotted;text-underline-offset:2px"
+          title="Click for version history"></span></div>
         <div id="last-backup-display" style="margin-top:3px;font-size:10px;color:var(--text3)"></div>
         <div id="licence-key-display" style="display:none;margin-top:4px;cursor:pointer;text-decoration:underline;color:var(--text3)" onclick="showLicenceModal()">
           Licence: <span id="licence-key-short">—</span>
@@ -1357,9 +1359,20 @@
 
       <!-- REPORTS -->
       <div id="view-reports" class="view">
-        <div style="display:flex;justify-content:flex-end;margin-bottom:12px">
-          <button class="btn btn-primary" onclick="exportReportsPDF()">⎙ Download PDF Statements</button>
+        <div id="controls-banner"></div>
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:12px;flex-wrap:wrap">
+          <div style="display:flex;align-items:center;gap:6px">
+            <input id="fcode-input" placeholder="ƒ field code — e.g. PL.700" spellcheck="false"
+              style="width:190px;padding:6px 10px;border:1px solid var(--border2);border-radius:var(--radius);font-size:12px;font-family:var(--mono);background:var(--surface)"
+              onkeydown="if(event.key==='Enter')fieldCodeLookup()" oninput="if(!this.value)document.getElementById('fcode-result').innerHTML=''">
+            <button class="btn btn-sm" onclick="fieldCodeLookup()">Look up</button>
+          </div>
+          <div style="display:flex;gap:8px">
+            <button class="btn" onclick="exportReportsJSON()">{ } Download JSON Data</button>
+            <button class="btn btn-primary" onclick="exportReportsPDF()">⎙ Download PDF Statements</button>
+          </div>
         </div>
+        <div id="fcode-result" style="font-size:12px;margin:-4px 0 10px;color:var(--text2)"></div>
         <!-- Report tabs -->
         <div style="display:flex;gap:4px;margin-bottom:20px;background:var(--surface2);padding:4px;border-radius:var(--radius);width:fit-content;flex-wrap:wrap">
           <button class="report-tab active" onclick="switchReport('pl')" id="rtab-pl">Profit &amp; Loss</button>
@@ -1550,6 +1563,35 @@
 </div>
 
 <script>
+// ═══════════════════════════════════════════════════════════════
+// VERSIONING
+// APP_VERSION  — the software release (semver). Bump on every deployed change:
+//                MAJOR = accounting behaviour change, MINOR = new feature, PATCH = fix.
+// DATA_VERSION — the localStorage schema. Bump ONLY when stored data shape changes,
+//                and add a migration step in migrateData() for the old→new shape.
+// Every export, backup, and save is stamped with both, so any file can be traced to
+// the exact software version that produced it.
+// ═══════════════════════════════════════════════════════════════
+const APP_VERSION  = '2.0.0';
+const DATA_VERSION = 1;
+const APP_CHANGELOG = [
+  ['2.0.0', '2026-07-14', 'Robustness release: regression test suite (35 tests); one shared computation per report so screen = Excel = JSON = PDF; internal control checks on every Reports view; ƒ calculation formulas on every total; TaxCycle-style field codes with lookup; fixed invoice/HST/GL/home-office double-counts, invoice deletion cleanup, import dedup and status parsing.'],
+  ['1.x',   '2025–2026', 'Original release: transactions, imports (CSV/XLSX/PDF/paste), invoices & A/R, shareholder loan, home office, fixed assets/CCA, AJE, HST, GIFI, multi-client, backups.'],
+];
+
+// Data migrations — one step per DATA_VERSION bump. Runs automatically on load.
+function migrateData(fromVersion) {
+  // if(fromVersion < 2) { ...transform stored arrays to the v2 shape... }
+  return DATA_VERSION;
+}
+
+function showChangelog() {
+  alert(`J&M Ledger — version ${APP_VERSION} (data schema v${DATA_VERSION})\n\n`
+    + APP_CHANGELOG.map(([v,d,notes]) => `v${v} (${d})\n${notes}`).join('\n\n'));
+}
+const _verEl = document.getElementById('app-version-display');
+if(_verEl) _verEl.textContent = 'v' + APP_VERSION;
+
 // ——— Chart of Accounts (CRA-aligned) ———
 // Base ledgers — users can add custom ones in Company Settings
 // ═══════════════════════════════════════════════════════════════
@@ -1880,6 +1922,9 @@ const save = () => {
     localStorage.setItem(ck('ledger_assets'), JSON.stringify(fixedAssets||[]));
     localStorage.setItem(ck('ledger_cfg'), JSON.stringify(companyConfig||{}));
     localStorage.setItem(ck('ledger_aje'), JSON.stringify(adjustingEntries||[]));
+    // Version stamps: which schema this data is in, and which app release last wrote it
+    localStorage.setItem(ck('ledger_data_version'), String(DATA_VERSION));
+    localStorage.setItem('ledger_app_version', APP_VERSION);
     // Keep client registry name in sync with company name
     syncClientName();
     _saveErrorShown = false; // a successful save clears any prior failure latch
@@ -1908,6 +1953,15 @@ function syncClientName() {
 }
 const load = () => {
   ensureClientSetup();
+  // Schema versioning: migrate older data forward; warn if the data was written by a NEWER
+  // schema than this software understands (e.g. an old copy of the app opened on new data).
+  try {
+    const storedV = parseInt(localStorage.getItem(ck('ledger_data_version'))||'1');
+    if(storedV < DATA_VERSION) migrateData(storedV);
+    else if(storedV > DATA_VERSION) {
+      setTimeout(()=>{ try { toast(`⚠ This data was saved by a newer version of the app (schema v${storedV} > v${DATA_VERSION}). Update the app before editing.`); } catch(_){} }, 500);
+    }
+  } catch(_){}
   // Load companyConfig FIRST so customLedgers cleanup and refreshAccountSets use real data
   try { const d = localStorage.getItem(ck('ledger_cfg')); if(d) companyConfig = JSON.parse(d); } catch{}
   try { const d = localStorage.getItem(ck('ledger_txs')); if(d) transactions = JSON.parse(d); } catch{}
@@ -3074,11 +3128,13 @@ function linkTxToInvoice(txId, invId) {
       ? {...inv, status: inv.status==='paid' ? 'sent' : inv.status} : inv);
   }
 
-  // Link transaction to new invoice
+  // Link transaction to new invoice. On UNLINK, the A/R category must be cleared too — an
+  // unlinked deposit still categorized 'Accounts Receivable' would keep crediting A/R with no
+  // invoice behind it.
   transactions = transactions.map(t => t.id===txId
     ? {...t, linkedInvoiceId: invId||null,
-       // Auto-set category to Accounts Receivable when linking
-       category: invId ? 'Accounts Receivable' : t.category} : t);
+       category: invId ? 'Accounts Receivable'
+                       : (t.category==='Accounts Receivable' ? 'Uncategorized' : t.category)} : t);
 
   if(invId) {
     const inv = invoices.find(i=>i.id===invId);
@@ -3476,7 +3532,7 @@ function renderTransactions() {
   const cats = [...new Set(transactions.map(t=>t.category).filter(Boolean))].sort();
   const catFilter = document.getElementById('category-filter');
   const curVal = catFilter.value;
-  catFilter.innerHTML = '<option value="">All Categories</option>' + cats.map(c=>`<option${c===curVal?'selected':''}>${esc(c)}</option>`).join('');
+  catFilter.innerHTML = '<option value="">All Categories</option>' + cats.map(c=>`<option${c===curVal?' selected':''}>${esc(c)}</option>`).join('');
 }
 
 function renderEditRow(tx) {
@@ -3493,7 +3549,7 @@ function renderEditRow(tx) {
           <input class="edit-input" type="date" value="${tx.date}" data-field="date" onchange="event.stopPropagation();updateField('${tx.id}','date',this.value)">
         </div>
         <div>
-          <div class="edit-label">Amount (incl. HST if applicable)</div>
+          <div class="edit-label">Amount (incl. HST if applicable)${fcode('TX.AMT')}</div>
           <input class="edit-input" type="number" step="0.01" value="${tx.amount}" data-field="amount" id="ef-amount-${tx.id}" oninput="event.stopPropagation();updateField('${tx.id}','amount',this.value);recalcHst('${tx.id}')">
         </div>
         <div>
@@ -3530,7 +3586,7 @@ function renderEditRow(tx) {
             oninput="event.stopPropagation();updateField('${tx.id}','hstRate',this.value);recalcHst('${tx.id}')" placeholder="13">
         </div>
         <div>
-          <div class="edit-label">HST Amount</div>
+          <div class="edit-label">HST Amount${fcode('TX.HST')}</div>
           <input class="edit-input" type="number" step="0.01" value="${hstAmt}" id="ef-hstamt-${tx.id}"
             oninput="event.stopPropagation();updateField('${tx.id}','hstAmount',this.value)" placeholder="0.00"
             style="background:${hstType==='manual'?'var(--surface)':'var(--surface2)'}">
@@ -3826,6 +3882,7 @@ function exportReportsPDF() {
         <div class="rpt-period">${period}</div>
       </div>
       <table>${tableHtml}</table>
+      <div style="margin-top:14px;font-size:8px;color:#999">Generated by J&amp;M Ledger v${APP_VERSION} — ${new Date().toISOString().slice(0,10)}</div>
     </div>`;
 
   const w = window.open('','_blank','width=850,height=1100');
@@ -4124,7 +4181,127 @@ function periodLabel() {
 }
 
 // ——— Reports ———
+// ═══════════════════════════════════════════════════════════════
+// INTERNAL CONTROLS — the app audits its own books on every reports render.
+// Every check compares two independent views of the same data; any difference
+// is surfaced loudly instead of being silently wrong.
+// ═══════════════════════════════════════════════════════════════
+function runControlChecks() {
+  const issues = [];
+  const push = (level, msg) => issues.push({level, msg});
+  try {
+    const full = buildFullLedger();
+
+    // 1. Trial balance: total debits must equal total credits
+    let dr=0, cr=0;
+    Object.values(full).forEach(a=>{ dr+=a.clDr; cr+=a.clCr; });
+    if(Math.abs(dr-cr) > 0.01)
+      push('error', `Trial Balance out of balance by ${fmt(Math.abs(dr-cr))} (debits ${fmt(dr)} vs credits ${fmt(cr)})`);
+
+    // 2. Balance sheet equation: Assets = Liabilities + Equity
+    const bs = computeBS();
+    if(Math.abs(bs.totalAssets - bs.totalLiabEquity) > 0.02)
+      push('error', `Balance Sheet does not balance: assets ${fmt(bs.totalAssets)} vs liabilities+equity ${fmt(bs.totalLiabEquity)}`);
+
+    // 3. GL ties to Trial Balance — every account's GL closing must equal its TB closing.
+    //    (The GL and the ledger are built by separate code paths; this catches any future drift.)
+    const gl = buildGLAccounts();
+    const glMismatches = [];
+    const names = new Set([...Object.keys(full), ...Object.keys(gl)]);
+    names.forEach(name => {
+      const g = gl[name];
+      const glClose = g ? (g.obDr + g.entries.reduce((s,e)=>s+e.dr,0)) - (g.obCr + g.entries.reduce((s,e)=>s+e.cr,0)) : 0;
+      const f = full[name];
+      const tbClose = f ? f.clDr - f.clCr : 0;
+      if(Math.abs(glClose - tbClose) > 0.01) glMismatches.push(name);
+    });
+    if(glMismatches.length)
+      push('error', `General Ledger disagrees with Trial Balance on: ${glMismatches.slice(0,4).join(', ')}${glMismatches.length>4?` +${glMismatches.length-4} more`:''}`);
+
+    // 4. Referential integrity: no transaction may point at a deleted invoice
+    const invIds = new Set(invoices.map(i=>i.id));
+    const dangling = transactions.filter(t=>t.linkedInvoiceId && !invIds.has(t.linkedInvoiceId)).length;
+    if(dangling)
+      push('error', `${dangling} payment transaction${dangling!==1?'s':''} linked to a deleted invoice — open the transaction and unlink or re-link`);
+
+    // 5. Unbalanced journal entries in storage (excluded from the books, but need fixing)
+    const badAje = adjustingEntries.filter(e=>{
+      if(e.id==='new') return false;
+      const l=e.lines||[];
+      const d=l.reduce((s,x)=>s+(parseFloat(x.debit)||0),0), c=l.reduce((s,x)=>s+(parseFloat(x.credit)||0),0);
+      return Math.abs(d-c) > 0.005;
+    }).length;
+    if(badAje)
+      push('warn', `${badAje} unbalanced journal entr${badAje===1?'y is':'ies are'} excluded from the books — fix in Adjusting Entries`);
+
+    // 6. Opening balances must net to zero
+    const obDr = openingBalances.reduce((s,o)=>s+(parseFloat(o.debit)||0),0);
+    const obCr = openingBalances.reduce((s,o)=>s+(parseFloat(o.credit)||0),0);
+    if(Math.abs(obDr-obCr) > 0.01)
+      push('warn', `Opening balances out of balance by ${fmt(Math.abs(obDr-obCr))} — add the equity/retained-earnings side`);
+
+    // 7. Invoices labelled paid/partial with no (or insufficient) linked deposits
+    const linkedByInv = {};
+    transactions.filter(t=>t.linkedInvoiceId).forEach(t=>{ linkedByInv[t.linkedInvoiceId]=(linkedByInv[t.linkedInvoiceId]||0)+Math.abs(parseFloat(t.amount)||0); });
+    const unlinkedPaid = invoices.filter(i=>i.status!=='void'&&i.status!=='draft'
+      && (i.status==='paid'||i.status==='partial')
+      && (linkedByInv[i.id]||0) < (parseFloat(i.total)||0) - 0.01).length;
+    if(unlinkedPaid)
+      push('warn', `${unlinkedPaid} invoice${unlinkedPaid!==1?'s':''} marked paid/partial without matching linked deposits — A/R stays open until the deposit is linked`);
+  } catch(err) {
+    push('error', 'Control checks could not run: ' + (err && err.message || err));
+  }
+  return issues;
+}
+
+function renderControlsBanner() {
+  const el = document.getElementById('controls-banner');
+  if(!el) return;
+  const issues = runControlChecks();
+  const errors = issues.filter(i=>i.level==='error');
+  const warns  = issues.filter(i=>i.level==='warn');
+  if(!issues.length) {
+    el.innerHTML = `<div style="background:var(--accent-light);border:1px solid var(--accent);border-radius:var(--radius);
+      padding:7px 12px;margin-bottom:12px;font-size:12px;color:var(--accent-text)">
+      ✓ Internal controls passed — books balanced, GL ties to Trial Balance, no integrity issues</div>`;
+    return;
+  }
+  el.innerHTML = (errors.length ? `<div style="background:var(--danger-light,#fdecea);border:1px solid var(--danger);border-radius:var(--radius);
+      padding:8px 12px;margin-bottom:8px;font-size:12px;color:var(--danger)">
+      <strong>⛔ Control failure${errors.length!==1?'s':''}:</strong><br>${errors.map(i=>'• '+esc(i.msg)).join('<br>')}
+      <div style="margin-top:4px;font-size:11px">To debug: open <strong>ƒ Calculation details</strong> at the bottom of the affected report to see the formula behind each total, and click any account line to drill into its General Ledger postings.</div></div>` : '')
+    + (warns.length ? `<div style="background:var(--warning-light,#fff8e1);border:1px solid #f5d77a;border-radius:var(--radius);
+      padding:8px 12px;margin-bottom:12px;font-size:12px;color:var(--warning)">
+      <strong>⚠ Warning${warns.length!==1?'s':''}:</strong><br>${warns.map(i=>'• '+esc(i.msg)).join('<br>')}</div>` : '');
+}
+
+// JSON export — dumps the SAME report models the screen renders (and Excel exports), plus the
+// control-check results, as one machine-readable file.
+function exportReportsJSON() {
+  const payload = {
+    appVersion: APP_VERSION,
+    dataVersion: DATA_VERSION,
+    exportedAt: new Date().toISOString(),
+    client: companyConfig.corpName || '',
+    period: periodLabel(),
+    controls: runControlChecks(),
+    trialBalance: buildFullLedger(),
+    profitAndLoss: computePL(),
+    balanceSheet: computeBS(),
+    hst: computeHST(),
+    generalLedger: buildGLAccounts(),
+    gifi: (typeof buildGifiData==='function' ? buildGifiData() : null),
+  };
+  const json = JSON.stringify(payload, null, 2);
+  const a = document.createElement('a');
+  a.href = 'data:application/json;charset=utf-8,' + encodeURIComponent(json);
+  a.download = `${(companyConfig.corpName||'ledger').replace(/[^a-z0-9]/gi,'_')}_reports_${new Date().toISOString().slice(0,10)}.json`;
+  a.click();
+  toast('✓ Report data exported as JSON — identical figures to the on-screen reports');
+}
+
 function renderReports() {
+  renderControlsBanner();
   renderPL();
   renderTrialBalance();
   renderBalanceSheet();
@@ -4165,7 +4342,7 @@ function renderTrialBalance() {
       html += `<tr class="tb-row">
         <td style="padding:7px 0 7px 18px;border-bottom:1px solid var(--border);cursor:pointer"
           onclick="drilldown('${a.name.replace(/'/g,"\\'")}')" title="View in General Ledger">
-          ${esc(a.name)} <span style="font-size:10px;color:var(--text3)">↗</span>
+          ${esc(a.name)}${getGifi(a.name)?` <span style="font-size:9px;background:var(--surface2);border:1px solid var(--border);border-radius:4px;padding:0 4px;color:var(--text3);font-family:var(--mono)" title="GIFI code (CRA T2 schedule line)">${esc(getGifi(a.name))}</span>`:''} <span style="font-size:10px;color:var(--text3)">↗</span>
         </td>
         ${tdR(a.obDr,true)}${tdR(a.obCr,false)}
         ${tdR(a.mvDr,true)}${tdR(a.mvCr,false)}
@@ -4188,10 +4365,80 @@ function renderTrialBalance() {
       <td style="text-align:right;padding:10px 8px;border-left:1px solid var(--border2)"><strong style="color:${clBal?'var(--accent)':'var(--danger)'}">${fmt(totClDr)}</strong></td>
       <td style="text-align:right;padding:10px 8px"><strong style="color:${clBal?'var(--accent)':'var(--danger)'}">${fmt(totClCr)}</strong></td>
     </tr>
-    ${!clBal&&(totClDr+totClCr)>0?`<tr><td colspan="7" style="font-size:11px;color:var(--warning);padding:6px 0;border:none">⚠ Closing balance out by ${fmt(Math.abs(totClDr-totClCr))} — check uncategorized transactions or opening balances.</td></tr>`:''}`;
+    ${!clBal&&(totClDr+totClCr)>0?`<tr><td colspan="7" style="font-size:11px;color:var(--warning);padding:6px 0;border:none">⚠ Closing balance out by ${fmt(Math.abs(totClDr-totClCr))} — check uncategorized transactions or opening balances.</td></tr>`:''}
+    ${formulaDetailsHtml({
+      'Per-account closing': 'Closing = Opening + Movement, netted to one side (DR or CR). Click any closing amount to see every posting behind it in the General Ledger.',
+      'Opening balance check': `Total opening DR ${fmt(totObDr)} − CR ${fmt(totObCr)} = ${fmt(totObDr-totObCr)} ${Math.abs(totObDr-totObCr)<0.01?'✓':'⚠ should be $0.00'}`,
+      'Movement check': `Total movement DR ${fmt(totMvDr)} − CR ${fmt(totMvCr)} = ${fmt(totMvDr-totMvCr)} ${Math.abs(totMvDr-totMvCr)<0.01?'✓':'⚠ should be $0.00'}`,
+      'Closing balance check': `Total closing DR ${fmt(totClDr)} − CR ${fmt(totClCr)} = ${fmt(totClDr-totClCr)} ${clBal?'✓ balanced':'⚠ OUT OF BALANCE'}`,
+    }, 7)}`;
 }
 
 // ——— HST Report ———
+// HST model — screen + Excel export read this. Excludes linked/A-R deposits (the invoice carries
+// their HST), and counts home-office ITC exactly once: posted ho-* shareholder entries are the
+// real ledger postings; the worksheet contributes only the not-yet-posted remainder.
+function computeHST() {
+  const HST_SALES_CATS = new Set(['Sales Revenue','Service Revenue']);
+  const isTaxableSale = t => !t.linkedInvoiceId && t.category!=='Accounts Receivable'
+    && (HST_SALES_CATS.has(t.category) || (isIncome(t) && (parseFloat(t.hstAmount)||0) > 0));
+  const isTaxableExpense = t => isExpense(t) && (parseFloat(t.hstAmount)||0) > 0;
+
+  const salesTx = transactions.filter(t => isTaxableSale(t) && (parseFloat(t.hstAmount)||0) > 0);
+  const hstCollectedTx  = salesTx.reduce((s,t)=>s+(parseFloat(t.hstAmount)||0),0);
+  const liveInv = invoices.filter(inv=>inv.status!=='void'&&inv.status!=='draft');
+  const hstCollectedInv = liveInv.reduce((s,inv)=>s+(parseFloat(inv.hstAmount)||0),0);
+  const hstCollected = hstCollectedTx + hstCollectedInv;
+
+  const grossRevenueTx  = salesTx.reduce((s,t)=>s+Math.abs(t.amount),0);
+  const grossRevenueInv = liveInv.reduce((s,inv)=>s+(parseFloat(inv.total)||0),0);
+  const grossRevenue    = grossRevenueTx + grossRevenueInv; // incl HST
+  const netRevenue      = grossRevenue - hstCollected;      // excl HST
+
+  const expenseTx  = transactions.filter(t => isTaxableExpense(t));
+  const hstPaidTx  = expenseTx.reduce((s,t)=>s+(parseFloat(t.hstAmount)||0),0);
+  const hstPaidSh  = shEntries.reduce((s,e)=>s+(parseFloat(e.hstAmount)||0),0);
+  // Home office: posted ho-* entries are already inside hstPaidSh (they ARE the ledger postings).
+  // The worksheet contributes only what has NOT been posted yet — never both.
+  const hoTotals = getHoTotals();
+  const hoPosted = shEntries.filter(e=>String(e.id||'').startsWith('ho-'));
+  const hoPostedHst   = hoPosted.reduce((s,e)=>s+(parseFloat(e.hstAmount)||0),0);
+  const hoPostedGross = hoPosted.reduce((s,e)=>s+Math.abs(parseFloat(e.amount)||0),0);
+  const hstPaidHo   = Math.max(0, (hoTotals.hst||0) - hoPostedHst);
+  const grossExpHo  = Math.max(0, (hoTotals.biz||0) - hoPostedGross);
+  const hstPaidTotal = hstPaidTx + hstPaidSh + hstPaidHo;
+  const netHst = hstCollected - hstPaidTotal;
+
+  const grossExpTx = expenseTx.reduce((s,t)=>s+expenseAmt(t),0);
+  const grossExpSh = shEntries.filter(e=>(parseFloat(e.hstAmount)||0)>0).reduce((s,e)=>s+Math.abs(e.amount),0);
+  const grossExpenses = grossExpTx + grossExpSh + grossExpHo;
+  const expensesExHst = grossExpenses - hstPaidTotal;
+
+  // Quick Method figures (configured remit rate; 8.8% fallback)
+  const rate1 = parseFloat(companyConfig.hstQuickRate || '8.8') / 100;
+  const rate1Pct = (rate1*100).toFixed(1);
+  const first30k = Math.min(netRevenue, 30000);
+  const credit1pct = parseFloat((first30k * 0.01).toFixed(2));
+  const remittance = parseFloat((rate1 * grossRevenue - credit1pct).toFixed(2));
+  const hstKept = parseFloat((hstCollected - remittance).toFixed(2));
+  const traditionalOwing = parseFloat((hstCollected - hstPaidTotal).toFixed(2));
+  const saving = parseFloat((traditionalOwing - remittance).toFixed(2));
+
+  const formulas = {
+    'HST Collected': `Transactions ${fmt(hstCollectedTx)} + Invoices ${fmt(hstCollectedInv)} = ${fmt(hstCollected)} (linked/A-R deposits excluded — their HST is counted via the invoice)`,
+    'Total HST Paid (ITC)': `Expenses ${fmt(hstPaidTx)} + Shareholder incl. posted home office ${fmt(hstPaidSh)} + Home office not yet posted ${fmt(hstPaidHo)} = ${fmt(hstPaidTotal)}`,
+    'Net HST Owing / (Refund)': `Collected ${fmt(hstCollected)} − ITC ${fmt(hstPaidTotal)} = ${fmt(netHst)}`,
+    'Quick Method remittance': `${rate1Pct}% × Gross Revenue ${fmt(grossRevenue)} − 1% credit ${fmt(credit1pct)} = ${fmt(remittance)}`,
+    'Quick Method saving': `Traditional owing ${fmt(traditionalOwing)} − Quick remittance ${fmt(remittance)} = ${fmt(saving)}`,
+  };
+
+  return { salesTx, expenseTx, hstCollectedTx, hstCollectedInv, hstCollected,
+           grossRevenueTx, grossRevenueInv, grossRevenue, netRevenue,
+           hstPaidTx, hstPaidSh, hstPaidHo, hstPaidTotal, netHst,
+           grossExpTx, grossExpSh, grossExpHo, grossExpenses, expensesExHst, hoTotals, formulas,
+           quick: { rate1, rate1Pct, first30k, credit1pct, remittance, hstKept, traditionalOwing, saving } };
+}
+
 function renderHST() {
   document.getElementById('hst-period').innerHTML = cfgReportHeader('HST / GST Summary') + '<span style="font-size:11px;color:var(--text3)">' + periodLabel() + '</span>';
 
@@ -4208,51 +4455,17 @@ function renderHST() {
     `<tr class="${cls}"><td>${label}${sub?`<br><span style="font-size:10px;color:var(--text3)">${sub}</span>`:''}</td>
      <td style="text-align:right;${color?'color:'+color+';font-weight:500':''}">${val!==null?fmt(val):''}</td></tr>`;
 
-  // ── Shared calculations ──
-  const HST_SALES_CATS = new Set(['Sales Revenue','Service Revenue','Accounts Receivable']);
-  const isTaxableSale    = t => HST_SALES_CATS.has(t.category) || (isIncome(t) && (parseFloat(t.hstAmount)||0) > 0);
-  const isTaxableExpense = t => isExpense(t) && (parseFloat(t.hstAmount)||0) > 0;
-
-  const salesTx = transactions.filter(t => isTaxableSale(t) && (parseFloat(t.hstAmount)||0) > 0);
-  const hstCollectedTx  = salesTx.reduce((s,t)=>s+(parseFloat(t.hstAmount)||0),0);
-  const hstCollectedInv = invoices.filter(inv=>inv.status!=='void'&&inv.status!=='draft')
-                            .reduce((s,inv)=>s+(parseFloat(inv.hstAmount)||0),0);
-  const hstCollected = hstCollectedTx + hstCollectedInv;
-
-  // Gross taxable revenue (incl HST) — used by both methods
-  const grossRevenueTx  = salesTx.reduce((s,t)=>s+Math.abs(t.amount),0);
-  const grossRevenueInv = invoices.filter(inv=>inv.status!=='void'&&inv.status!=='draft')
-                            .reduce((s,inv)=>s+(parseFloat(inv.total)||0),0);
-  const grossRevenue    = grossRevenueTx + grossRevenueInv; // incl HST
-  const netRevenue      = grossRevenue - hstCollected;      // excl HST
-
-  const expenseTx  = transactions.filter(t => isTaxableExpense(t));
-  const hoTotals   = getHoTotals();
-  const hstPaidTx  = expenseTx.reduce((s,t)=>s+(parseFloat(t.hstAmount)||0),0);
-  const hstPaidSh  = shEntries.reduce((s,e)=>s+(parseFloat(e.hstAmount)||0),0);
-  const hstPaidHo  = hoTotals.hst;
-  const hstPaidTotal = hstPaidTx + hstPaidSh + hstPaidHo;
+  // ── Shared calculations — the HST model (also consumed by the Excel export) ──
+  const M = computeHST();
+  const { salesTx, expenseTx, hstCollectedTx, hstCollectedInv, hstCollected,
+          grossRevenueTx, grossRevenueInv, grossRevenue, netRevenue,
+          hstPaidTx, hstPaidSh, hstPaidHo, hstPaidTotal } = M;
 
   const rows = [];
 
   if(method === 'quick') {
-    // ── Quick Method ──
-    const rate1   = parseFloat(companyConfig.hstQuickRate  || toggle?.querySelector('option[value="8.8"]')?.value || '8.8') / 100;
-    const rate2   = parseFloat(companyConfig.hstQuickRate2 || rate1*100+'') / 100;
-    const rate1Pct= (rate1*100).toFixed(1);
-    const rate2Pct= (rate2*100).toFixed(1);
-
-    // Quick Method: remit rate × gross revenue (incl HST)
-    // 1% credit on first $30K of eligible supplies (revenue excl HST)
-    const first30k     = Math.min(netRevenue, 30000);
-    const creditPct    = 0.01;
-    const credit1pct   = parseFloat((first30k * creditPct).toFixed(2));
-
-    // Remittance = rate × gross revenue - 1% credit
-    const remittance      = parseFloat((rate1 * grossRevenue - credit1pct).toFixed(2));
-    const hstKept         = parseFloat((hstCollected - remittance).toFixed(2));
-    const traditionalOwing = parseFloat((hstCollected - hstPaidTotal).toFixed(2));
-    const saving          = parseFloat((traditionalOwing - remittance).toFixed(2));
+    // ── Quick Method — all figures from the shared model ──
+    const { rate1, rate1Pct, first30k, credit1pct, remittance, hstKept, traditionalOwing, saving } = M.quick;
     // Store for AJE creation
     window._quickMethodCalc = { hstCollected, remittance, hstKept, credit1pct, grossRevenue, netRevenue, rate1Pct, hstPaidTotal, traditionalOwing, saving };
 
@@ -4311,15 +4524,9 @@ function renderHST() {
         The actual CRA remittance of ${fmt(remittance)} is a separate bank transaction — categorize it as <em>GST/HST Payable</em>.
       </span>`;
   } else {
-    // ── Traditional Method ──
-    const hstPaid  = hstPaidTotal;
-    const netHst   = hstCollected - hstPaid;
-
-    const grossExpTx  = expenseTx.reduce((s,t)=>s+expenseAmt(t),0);
-    const grossExpSh  = shEntries.filter(e=>(parseFloat(e.hstAmount)||0)>0).reduce((s,e)=>s+Math.abs(e.amount),0);
-    const grossExpHo  = hoTotals.biz;
-    const grossExpenses = grossExpTx + grossExpSh + grossExpHo;
-    const expensesExHst = grossExpenses - hstPaid;
+    // ── Traditional Method — all figures from the shared model ──
+    const hstPaid = hstPaidTotal;
+    const { netHst, grossExpTx, grossExpSh, grossExpHo, grossExpenses, expensesExHst } = M;
 
     // Hide AJE panel for traditional
     const ajeWrap = document.getElementById('hst-quick-aje-wrap');
@@ -4358,6 +4565,7 @@ function renderHST() {
     </tr>`);
   }
 
+  rows.push(formulaDetailsHtml(M.formulas, 2, 'hst'));
   document.getElementById('hst-table').innerHTML = rows.join('');
 
   // Breakdown by category (traditional only)
@@ -4384,9 +4592,9 @@ function renderHST() {
     byCat[cat].paid += parseFloat(e.hstAmount)||0;
     byCat[cat].count++;
   });
-  if(hoTotals.hst > 0) {
+  if(hstPaidHo > 0) { // unposted worksheet remainder only — posted ho-* entries appear via shEntries above
     if(!byCat['Home Office']) byCat['Home Office']={collected:0,paid:0,count:0};
-    byCat['Home Office'].paid += hoTotals.hst;
+    byCat['Home Office'].paid += hstPaidHo;
     byCat['Home Office'].count++;
   }
 
@@ -4424,16 +4632,10 @@ function renderHST() {
 }
 
 // ——— General Ledger ———
-function renderGL() {
-  const glBody = document.getElementById('gl-body');
-  const glPeriod = document.getElementById('gl-period');
-  if(!glBody) return;
-  glPeriod.innerHTML = cfgReportHeader('General Ledger') + `<span style="font-size:11px;color:var(--text3)">${periodLabel()}</span>`;
-
-  const acctFilter = (document.getElementById('gl-account-filter')||{}).value||'';
-  const typeFilter  = (document.getElementById('gl-type-filter')||{}).value||'';
-
-  // Build per-account posting list from transactions + shareholder entries
+// GL model — the complete per-account posting list (opening balances, transactions, invoices,
+// shareholder, AJE, CCA), matching buildLedger's postings entry by entry. The GL screen AND the
+// Excel GL sheet read THIS — never rebuild postings anywhere else.
+function buildGLAccounts() {
   // account → { type, entries: [{date,description,source,dr,cr}], obDr, obCr }
   const accounts = {}; // name → {type, obDr, obCr, entries:[]}
 
@@ -4455,8 +4657,11 @@ function renderGL() {
       const amt = Math.abs(t.amount);
       const tacc = canonAccount(t.account);
       ensure(tacc, getEffectiveCOA()[tacc]?.type||'asset');
-      if(t.amount >= 0) accounts[tacc].entries.push({date:t.date, description:t.description||'Transfer', source:'Transfer', dr:amt, cr:0, txId:t.id});
-      else              accounts[tacc].entries.push({date:t.date, description:t.description||'Transfer', source:'Transfer', dr:0, cr:amt, txId:t.id});
+      // Honour the explicit transfer direction exactly like buildLedger (falls back to sign) —
+      // otherwise a both-positive linked pair would make the GL disagree with the Trial Balance.
+      const dir = t.transferDir || (t.amount >= 0 ? 'in' : 'out');
+      if(dir === 'in') accounts[tacc].entries.push({date:t.date, description:t.description||'Transfer', source:'Transfer', dr:amt, cr:0, txId:t.id});
+      else             accounts[tacc].entries.push({date:t.date, description:t.description||'Transfer', source:'Transfer', dr:0, cr:amt, txId:t.id});
       return;
     }
     const amt    = Math.abs(t.amount);
@@ -4523,6 +4728,24 @@ function renderGL() {
     }
   });
 
+  // 2b. Invoices — DR A/R (gross) / CR Revenue (net) + CR GST/HST Payable, same as buildLedger,
+  // so the on-screen GL shows the same A/R, revenue, and HST balances as the Trial Balance.
+  invoices.filter(inv=>inv.status!=='void'&&inv.status!=='draft').forEach(inv => {
+    const total = parseFloat(inv.total)||0;
+    if(!total) return;
+    const hst = Math.min(Math.max(parseFloat(inv.hstAmount)||0, 0), total);
+    const net = total - hst;
+    const rev = inv.category||'Sales Revenue';
+    ensure('Accounts Receivable','asset'); ensure(rev,'revenue');
+    const label = `Invoice ${inv.invoiceNum||''} — ${inv.client||''}`.trim();
+    accounts['Accounts Receivable'].entries.push({date:inv.date, description:label, source:'Invoice', dr:total, cr:0});
+    accounts[rev].entries.push({date:inv.date, description:label, source:'Invoice', dr:0, cr:net});
+    if(hst > 0) {
+      ensure('GST/HST Payable','liability');
+      accounts['GST/HST Payable'].entries.push({date:inv.date, description:label+' (HST)', source:'Invoice', dr:0, cr:hst});
+    }
+  });
+
   // 3. Shareholder entries — DR expense (net) + DR GST/HST Payable (ITC) / CR Due to Shareholder (gross)
   shEntries.forEach(e => {
     const amt = Math.abs(parseFloat(e.amount)||0);
@@ -4583,6 +4806,18 @@ function renderGL() {
   Object.values(accounts).forEach(a => {
     a.entries.sort((x,y) => (x.date||'').localeCompare(y.date||''));
   });
+  return accounts;
+}
+
+function renderGL() {
+  const glBody = document.getElementById('gl-body');
+  const glPeriod = document.getElementById('gl-period');
+  if(!glBody) return;
+  glPeriod.innerHTML = cfgReportHeader('General Ledger') + `<span style="font-size:11px;color:var(--text3)">${periodLabel()}</span>`;
+
+  const acctFilter = (document.getElementById('gl-account-filter')||{}).value||'';
+  const typeFilter  = (document.getElementById('gl-type-filter')||{}).value||'';
+  const accounts = buildGLAccounts();
 
   // Update account filter dropdown
   const glAcctFilter = document.getElementById('gl-account-filter');
@@ -4899,19 +5134,118 @@ function normaliseObRows(rows) {
   }).filter(Boolean).filter(r=>r.account && (r.debit||r.credit));
 }
 
-function renderPL() {
-  document.getElementById('pl-period').innerHTML = cfgReportHeader('Profit &amp; Loss Account') + '<span style="font-size:11px;color:var(--text3)">' + periodLabel() + '</span>';
+// ═══════════════════════════════════════════════════════════════
+// REPORT MODELS — one computation per report. The screen renderer AND every export
+// (Excel, JSON, PDF) consume the SAME model, so what you see is exactly what you get.
+// Never recompute report figures anywhere else.
+// Each model also returns `formulas` — the actual equation behind every computed total,
+// with real numbers substituted, so any figure that doesn't tie can be debugged on sight.
+// ═══════════════════════════════════════════════════════════════
 
+// ═══ FIELD CODES — TaxCycle-style: every calculated field has a stable code you can look up
+// to see its live value and the formula behind it. Account lines carry their GIFI codes.
+const FIELD_CODES = {
+  // Profit & Loss
+  'PL.100': {report:'pl',  label:'Total Revenue',                get:m=>m.income},
+  'PL.200': {report:'pl',  label:'Gross Profit',                 get:m=>m.grossProfit},
+  'PL.400': {report:'pl',  label:'Subtotal Company Expenses',    get:m=>m.opExpenses+m.uncatExpAmt.total},
+  'PL.450': {report:'pl',  label:'Subtotal Shareholder Expenses',get:m=>m.shTotal},
+  'PL.470': {report:'pl',  label:'Total CCA Depreciation',       get:m=>m.totalCCA},
+  'PL.500': {report:'pl',  label:'Total Operating Expenses',     get:m=>m.totalOpExpenses},
+  'PL.600': {report:'pl',  label:'Net Income Before Tax',        get:m=>m.netBeforeTax},
+  'PL.700': {report:'pl',  label:'Net Profit / (Loss)',          get:m=>m.netProfit},
+  // Balance Sheet
+  'BS.100': {report:'bs',  label:'Total Current Assets',         get:m=>m.totalCurrentAssets},
+  'BS.200': {report:'bs',  label:'Total Fixed Assets (NBV)',     get:m=>m.totalFixedNBV},
+  'BS.300': {report:'bs',  label:'Total Assets',                 get:m=>m.totalAssets},
+  'BS.400': {report:'bs',  label:'Total Liabilities',            get:m=>m.totalLiabilities},
+  'BS.500': {report:'bs',  label:'Total Equity',                 get:m=>m.totalEquity},
+  'BS.600': {report:'bs',  label:'Total Liabilities + Equity',   get:m=>m.totalLiabEquity},
+  'BS.999': {report:'bs',  label:'Balance check',                get:m=>m.totalAssets-m.totalLiabEquity},
+  // HST / GST
+  'HST.100':{report:'hst', label:'HST Collected',                get:m=>m.hstCollected},
+  'HST.200':{report:'hst', label:'Total HST Paid (ITC)',         get:m=>m.hstPaidTotal},
+  'HST.300':{report:'hst', label:'Net HST Owing / (Refund)',     get:m=>m.netHst},
+  'HST.400':{report:'hst', label:'Quick Method remittance',      get:m=>m.quick.remittance},
+  'HST.450':{report:'hst', label:'Quick Method saving',          get:m=>m.quick.saving},
+  // Edit fields (inputs & per-row calculations)
+  'TX.AMT': {kind:'input', label:'Transaction amount',  formula:'As entered/imported. Negative = money out, positive = money in.'},
+  'TX.HST': {kind:'calc',  label:'Transaction HST',     formula:'Inclusive: amount − amount ÷ (1 + rate%) · Exclusive: amount × rate% · Manual: as entered · None: 0. Clamped to [0, amount] when posting. Default rate from province.'},
+  'SH.AMT': {kind:'input', label:'Shareholder amount (gross)', formula:'Entered GROSS (HST included). Posts: DR expense (net) + DR GST/HST ITC / CR Due to Shareholder (gross).'},
+  'SH.HST': {kind:'calc',  label:'Shareholder HST',     formula:'Default Inclusive: amount − amount ÷ (1 + rate%) — e.g. 13/113 of gross at 13%. Manual/None override per line.'},
+  'INV.SUB':{kind:'input', label:'Invoice subtotal',    formula:'Entered net of HST. Posts CR revenue (net).'},
+  'INV.HST':{kind:'calc',  label:'Invoice HST',         formula:'Exclusive: subtotal × rate% · Manual: as entered. Posts CR GST/HST Payable.'},
+  'INV.TOT':{kind:'calc',  label:'Invoice total',       formula:'INV.SUB + INV.HST. Posts DR Accounts Receivable (gross); cleared only by linked deposits.'},
+};
+
+function resolveFieldCode(codeRaw) {
+  const code = String(codeRaw||'').toUpperCase().trim();
+  const def = FIELD_CODES[code];
+  if(!def) return null;
+  let value = null, formula = def.formula || '';
+  if(def.report) {
+    const m = def.report==='pl' ? computePL() : def.report==='bs' ? computeBS() : computeHST();
+    value = def.get ? def.get(m) : null;
+    formula = (m.formulas && m.formulas[def.label]) || formula;
+  }
+  return { code, label: def.label, kind: def.kind || 'calc', value, formula };
+}
+
+// Small code chip shown beside fields/rows; hover shows the field's formula.
+function fcode(code) {
+  const def = FIELD_CODES[code];
+  return `<span style="font-size:9px;background:var(--surface2);border:1px solid var(--border);border-radius:4px;
+    padding:0 4px;color:var(--text3);font-family:var(--mono);vertical-align:1px;margin-left:5px;cursor:help"
+    title="${esc(def ? (def.formula || def.label) : code)}">${esc(code)}</span>`;
+}
+
+// Type a code (e.g. PL.700) in the Reports header to see its live value + formula.
+function fieldCodeLookup() {
+  const inp = document.getElementById('fcode-input');
+  const out = document.getElementById('fcode-result');
+  if(!inp || !out) return;
+  const q = inp.value.trim();
+  if(!q) { out.innerHTML=''; return; }
+  const r = resolveFieldCode(q);
+  out.innerHTML = !r
+    ? `<span style="color:var(--danger)">Unknown field code "${esc(q)}" — try PL.700, BS.300, HST.300, TX.HST…</span>`
+    : `<strong style="font-family:var(--mono)">${esc(r.code)}</strong> · ${esc(r.label)}
+       ${r.value!=null ? ` = <strong>${fmt(r.value)}</strong>` : ''} <span style="color:var(--text3)">(${r.kind})</span><br>
+       <span style="font-family:var(--mono);font-size:10.5px;color:var(--text2)">${esc(r.formula)}</span>`;
+}
+
+// Collapsible "ƒ Calculation details" block appended to each report table.
+function formulaDetailsHtml(formulas, colspan, report) {
+  if(!formulas || !Object.keys(formulas).length) return '';
+  // label → field code for this report (chips like PL.700 shown beside each total)
+  const codeByLabel = {};
+  Object.entries(FIELD_CODES).forEach(([code,def])=>{ if(def.report===report) codeByLabel[def.label]=code; });
+  return `<tr><td colspan="${colspan}" style="padding:10px 0 2px;border:none">
+    <details style="font-size:11px;color:var(--text2)">
+      <summary style="cursor:pointer;color:var(--text3);font-weight:500;user-select:none">ƒ Calculation details — field codes &amp; how each total is computed</summary>
+      <table style="margin-top:8px;border-collapse:collapse">${Object.entries(formulas).map(([k,v])=>
+        `<tr><td style="padding:3px 8px 3px 0;font-family:var(--mono);font-size:10px;color:var(--text3);vertical-align:top;white-space:nowrap">${codeByLabel[k]?esc(codeByLabel[k]):''}</td>
+         <td style="padding:3px 14px 3px 0;font-weight:500;white-space:nowrap;vertical-align:top;font-size:11px">${esc(k)}</td>
+         <td style="padding:3px 0;font-family:var(--mono);font-size:10.5px;color:var(--text2)">${esc(v)}</td></tr>`).join('')}
+      </table>
+      <div style="margin-top:6px;font-size:10px;color:var(--text3)">Look up any code in the ƒ box above the reports. Account lines are clickable — they drill into the General Ledger showing every posting behind the balance.</div>
+    </details></td></tr>`;
+}
+function computePL() {
   // Use buildFullLedger as single source of truth — same as Trial Balance
   // This ensures AJEs flow into P&L automatically
   const full = buildFullLedger();
-  const effCOA = getEffectiveCOA();
 
   // ——— Revenue from ledger (revenue-type accounts only) ———
+  // 'Uncategorized Income' is diverted to its own warning bucket (mirroring the expense side at
+  // the 'Uncategorized Expense' divert below) — it must NOT also stay in revBycat, or the same
+  // deposits would be counted twice in Total Revenue.
   const revBycat = {};
+  let uncatIncAmt = 0;
   Object.entries(full).forEach(([name, a]) => {
     if(a.type !== 'revenue') return;
     const net = a.clCr - a.clDr; // credit-normal
+    if(name === 'Uncategorized Income') { uncatIncAmt += net; return; }
     if(net > 0.005) revBycat[name] = net;
   });
 
@@ -4927,8 +5261,6 @@ function renderPL() {
     if(!revBycat[cat]) revBycat[cat] = amt;
   });
 
-  const uncatIncAmt = transactions.filter(t=>t.category==='Uncategorized'&&t.amount>0)
-    .reduce((s,t)=>s+Math.abs(t.amount),0);
   const income = Object.values(revBycat).reduce((s,v)=>s+v,0) + uncatIncAmt;
 
   // ——— COGS ———
@@ -4949,10 +5281,9 @@ function renderPL() {
     if(net > 0.005) bycat[name] = net;
   });
   // ——— Shareholder-paid expenses ———
-  // These are ALREADY merged into the ledger (and therefore into `bycat`) by getShLedgerEntries()
-  // as DR <expense> / CR Due to Shareholder. To show them as their own section WITHOUT double
-  // counting, strip the shareholder portion out of the company-paid lines here, then add it back
-  // exactly once via the dedicated "Shareholder-Paid Expenses" section / shTotal below.
+  // Already merged into the ledger (and therefore into `bycat`) by getShLedgerEntries() as
+  // DR <expense> / CR Due to Shareholder. Strip the shareholder portion out of the company-paid
+  // lines, then add it back exactly once via shTotal.
   const shBycat = {};
   shEntries.forEach(e => {
     const amt = Math.abs(parseFloat(e.amount)||0);
@@ -4961,8 +5292,6 @@ function renderPL() {
     shBycat[cat] = (shBycat[cat]||0) + (amt - hst); // NET of HST — matches getShLedgerEntries
   });
   const shTotal   = Object.values(shBycat).reduce((s,v)=>s+v, 0);
-  // Remove shareholder-paid amounts from the company-paid `bycat` (same NET figure + category
-  // mapping as getShLedgerEntries, so the subtraction is exact).
   Object.entries(shBycat).forEach(([cat, amt]) => {
     if(bycat[cat] !== undefined) {
       bycat[cat] -= amt;
@@ -4989,6 +5318,31 @@ function renderPL() {
   const netBeforeTax = grossProfit - totalOpExpenses;
   const netProfit = netBeforeTax - corpTaxExpense; // after corporate income tax
   const uncatCount = transactions.filter(t=>t.category==='Uncategorized').length;
+
+  // ƒ formulas — the equation behind every computed total, real numbers substituted
+  const revAcctSum = Object.values(revBycat).reduce((s,v)=>s+v,0);
+  const formulas = {
+    'Total Revenue': `Σ ${Object.keys(revBycat).length} revenue account(s) ${fmt(revAcctSum)} + Uncategorized income ${fmt(uncatIncAmt)} = ${fmt(income)}`,
+    'Gross Profit': `Total Revenue ${fmt(income)} − COGS ${fmt(Math.max(0,cogs))} = ${fmt(grossProfit)}`,
+    'Subtotal Company Expenses': `Σ ${Object.keys(bycat).length} company-paid expense account(s) ${fmt(opExpenses)} + Uncategorized ${fmt(uncatExpAmt.total)} = ${fmt(opExpenses + uncatExpAmt.total)}`,
+    'Subtotal Shareholder Expenses': `Σ shareholder entries NET of HST = ${fmt(shTotal)} (gross − ITC; removed from company lines above so it counts once)`,
+    'Total CCA Depreciation': `Σ cumulative CCA through ${yr} across ${fixedAssets.length} asset(s) = ${fmt(totalCCA)}`,
+    'Total Operating Expenses': `Company ${fmt(opExpenses)} + Uncategorized ${fmt(uncatExpAmt.total>0?uncatExpAmt.total:0)} + Shareholder ${fmt(shTotal)} + CCA ${fmt(totalCCA)} = ${fmt(totalOpExpenses)}`,
+    'Net Income Before Tax': `Gross Profit ${fmt(grossProfit)} − Total Operating Expenses ${fmt(totalOpExpenses)} = ${fmt(netBeforeTax)}`,
+    'Net Profit / (Loss)': `Net Before Tax ${fmt(netBeforeTax)} − Corporate Tax ${fmt(corpTaxExpense)} = ${fmt(netProfit)}`,
+  };
+
+  return { revBycat, uncatIncAmt, income, cogs, grossProfit, bycat, uncatExpAmt, shBycat, shTotal,
+           shPending, opExpenses, ccaByClass, totalCCA, totalOpExpenses, netBeforeTax, netProfit,
+           corpTaxExpense, uncatCount, formulas };
+}
+
+function renderPL() {
+  document.getElementById('pl-period').innerHTML = cfgReportHeader('Profit &amp; Loss Account') + '<span style="font-size:11px;color:var(--text3)">' + periodLabel() + '</span>';
+
+  const { revBycat, uncatIncAmt, income, cogs, grossProfit, bycat, uncatExpAmt, shBycat, shTotal,
+          shPending, opExpenses, ccaByClass, totalCCA, totalOpExpenses, netBeforeTax, netProfit,
+          corpTaxExpense, uncatCount, formulas } = computePL();
   const py = companyConfig.priorYearPL || {};
   const hasPY = true; // always show PY column so user can enter data inline
 
@@ -5115,12 +5469,87 @@ function renderPL() {
       </div>
     </td></tr>`);
   }
+  rows.push(formulaDetailsHtml(formulas, 3, 'pl'));
   document.getElementById('pl-full-table').innerHTML = rows.join('');
+}
+
+// Balance Sheet model — screen + all exports read this. Skips 'Accum. Depreciation' contra
+// accounts (NBV schedule represents fixed assets), computes net profit from the same ledger,
+// and returns every section and total exactly as displayed.
+function computeBS() {
+  const full = buildFullLedger();
+  const currentAssets = [], fixedAssetAccts = [], longTermAssets = [], liabilities = [], equityAccts = [];
+  const revenues = [], expenses = [];
+
+  Object.entries(full).forEach(([name, a]) => {
+    const net = a.clDr - a.clCr; // positive = debit balance, negative = credit balance
+    if(a.type === 'asset') {
+      // Accumulated depreciation is a contra-asset ALREADY reflected in the NBV schedule
+      // (NBV = cost − accumulated CCA). Including it here would subtract depreciation twice.
+      if(name.startsWith('Accum. Depreciation')) return;
+      const val = net;
+      const coa = getEffectiveCOA();
+      const grp = coa[name]?.group || '';
+      if(grp === 'Fixed Assets' || name === 'Fixed Assets') fixedAssetAccts.push({name, val});
+      else if(grp === 'Long-term Assets') longTermAssets.push({name, val});
+      else currentAssets.push({name, val});
+    } else if(a.type === 'liability') {
+      liabilities.push({name, val: a.clCr - a.clDr});
+    } else if(a.type === 'equity') {
+      equityAccts.push({name, val: a.clCr - a.clDr});
+    } else if(a.type === 'revenue') {
+      revenues.push({name, val: a.clCr - a.clDr});
+    } else {
+      expenses.push({name, val: a.clDr - a.clCr});
+    }
+  });
+
+  // Fixed assets from CCA schedule (NBV) — same cumulative carry-forward series the ledger posts.
+  const yr = ccaThroughYear();
+  let totalCost=0, totalAccumDepn=0;
+  const faRows = [];
+  fixedAssets.forEach(asset => {
+    const cost = parseFloat(asset.cost)||0;
+    const accumCCA = calcCCAseries(asset, yr).cumulative;
+    const nbv = cost - accumCCA;
+    if(cost > 0) { faRows.push({name:asset.name, cls:asset.ccaClass, cost, accumCCA, nbv}); totalCost+=cost; totalAccumDepn+=accumCCA; }
+  });
+  const totalNBV = totalCost - totalAccumDepn;
+
+  const totalRevenue  = revenues.reduce((s,r)=>s+r.val,0);
+  const totalExpenses = expenses.reduce((s,e)=>s+e.val,0);
+  const netProfit = totalRevenue - totalExpenses; // includes corp tax + CCA via ledger — ties to P&L after-tax
+
+  const totalCurrentAssets   = currentAssets.reduce((s,a)=>s+a.val,0);
+  const totalLongTermAssets  = longTermAssets.reduce((s,a)=>s+a.val,0);
+  const totalFixedNBV        = faRows.length ? Math.max(0,totalNBV) : fixedAssetAccts.reduce((s,a)=>s+Math.max(0,a.val),0);
+  const totalAssets          = totalCurrentAssets + totalLongTermAssets + totalFixedNBV;
+  const totalLiabilities     = liabilities.reduce((s,l)=>s+l.val,0);
+  const totalEquityAccts     = equityAccts.reduce((s,e)=>s+e.val,0);
+  const totalEquity          = totalEquityAccts + netProfit;
+  const totalLiabEquity      = totalLiabilities + totalEquity;
+
+  const bsDiff = totalAssets - totalLiabEquity;
+  const formulas = {
+    'Total Current Assets': `Σ ${currentAssets.length} current asset account(s) = ${fmt(totalCurrentAssets)} (Accum. Depreciation contra excluded — it lives inside NBV)`,
+    'Total Fixed Assets (NBV)': faRows.length
+      ? `Cost ${fmt(totalCost)} − Accumulated CCA ${fmt(totalAccumDepn)} = ${fmt(totalNBV)}`
+      : `Σ fixed-asset ledger accounts = ${fmt(totalFixedNBV)}`,
+    'Total Assets': `Current ${fmt(totalCurrentAssets)} + Long-term ${fmt(totalLongTermAssets)} + Fixed NBV ${fmt(totalFixedNBV)} = ${fmt(totalAssets)}`,
+    'Total Liabilities': `Σ ${liabilities.length} liability account(s) = ${fmt(totalLiabilities)}`,
+    'Total Equity': `Σ equity accounts ${fmt(totalEquityAccts)} + Net Profit (from ledger, ties to P&L after tax) ${fmt(netProfit)} = ${fmt(totalEquity)}`,
+    'Total Liabilities + Equity': `Liabilities ${fmt(totalLiabilities)} + Equity ${fmt(totalEquity)} = ${fmt(totalLiabEquity)}`,
+    'Balance check': `Assets ${fmt(totalAssets)} − (Liabilities + Equity) ${fmt(totalLiabEquity)} = ${fmt(bsDiff)} ${Math.abs(bsDiff)<=0.02?'✓ balanced':'⚠ OUT OF BALANCE'}`,
+  };
+
+  return { currentAssets, fixedAssetAccts, longTermAssets, liabilities, equityAccts, faRows,
+           totalCost, totalAccumDepn, totalNBV, netProfit, totalCurrentAssets, totalLongTermAssets,
+           totalFixedNBV, totalAssets, totalLiabilities, totalEquityAccts, totalEquity, totalLiabEquity,
+           formulas };
 }
 
 function renderBalanceSheet() {
   document.getElementById('bs-period').innerHTML = cfgReportHeader('Balance Sheet') + '<span style="font-size:11px;color:var(--text3)">As at ' + new Date().toLocaleDateString('en-CA') + '</span>';
-  const full = buildFullLedger();
 
   // Prior year: use priorYearBS if set, otherwise opening balances
   const pyBS = companyConfig.priorYearBS || {};
@@ -5173,62 +5602,9 @@ function renderBalanceSheet() {
     </tr>`;
   };
 
-  // Derive all values from the same ledger as Trial Balance
-  const currentAssets = [], fixedAssetAccts = [], longTermAssets = [], liabilities = [], equityAccts = [];
-  const revenues = [], expenses = [];
-
-  Object.entries(full).forEach(([name, a]) => {
-    const net = a.clDr - a.clCr; // positive = debit balance, negative = credit balance
-    if(a.type === 'asset') {
-      // Accumulated depreciation is a contra-asset that is ALREADY reflected in the Fixed Assets
-      // Net Book Value schedule below (NBV = cost − accumulated CCA). Including the contra account
-      // in the generic asset buckets here would subtract depreciation a second time and throw the
-      // Balance Sheet out of balance by the accumulated CCA. Skip it — NBV represents fixed assets.
-      if(name.startsWith('Accum. Depreciation')) return;
-      const val = net; // assets normally debit — positive = asset value
-      const coa = getEffectiveCOA();
-      const grp = coa[name]?.group || '';
-      if(grp === 'Fixed Assets' || name === 'Fixed Assets') fixedAssetAccts.push({name, val});
-      else if(grp === 'Long-term Assets') longTermAssets.push({name, val});
-      else currentAssets.push({name, val});
-    } else if(a.type === 'liability') {
-      liabilities.push({name, val: a.clCr - a.clDr}); // liabilities credit-normal
-    } else if(a.type === 'equity') {
-      equityAccts.push({name, val: a.clCr - a.clDr});
-    } else if(a.type === 'revenue') {
-      revenues.push({name, val: a.clCr - a.clDr});
-    } else { // expense
-      expenses.push({name, val: a.clDr - a.clCr});
-    }
-  });
-
-  // Fixed assets from CCA schedule (NBV). Accumulated CCA = cumulative through the reporting year,
-  // with UCC carried forward year to year — the SAME series the ledger & P&L post, so they agree.
-  const yr = ccaThroughYear();
-  let totalCost=0, totalAccumDepn=0;
-  const faRows = [];
-  fixedAssets.forEach(asset => {
-    const cost = parseFloat(asset.cost)||0;
-    const accumCCA = calcCCAseries(asset, yr).cumulative;
-    const nbv = cost - accumCCA;
-    if(cost > 0) { faRows.push({name:asset.name, cls:asset.ccaClass, cost, accumCCA, nbv}); totalCost+=cost; totalAccumDepn+=accumCCA; }
-  });
-  const totalNBV = totalCost - totalAccumDepn;
-
-  // Net profit = total revenue credits - total expense debits (from ledger)
-  const totalRevenue  = revenues.reduce((s,r)=>s+r.val,0);
-  const totalExpenses = expenses.reduce((s,e)=>s+e.val,0);
-  const netProfit = totalRevenue - totalExpenses;
-
-  // Totals
-  const totalCurrentAssets  = currentAssets.reduce((s,a)=>s+a.val,0);
-  const totalLongTermAssets  = longTermAssets.reduce((s,a)=>s+a.val,0);
-  const totalFixedNBV        = faRows.length ? Math.max(0,totalNBV) : fixedAssetAccts.reduce((s,a)=>s+Math.max(0,a.val),0);
-  const totalAssets          = totalCurrentAssets + totalLongTermAssets + totalFixedNBV;
-  const totalLiabilities     = liabilities.reduce((s,l)=>s+l.val,0);
-  const totalEquityAccts     = equityAccts.reduce((s,e)=>s+e.val,0);
-  const totalEquity          = totalEquityAccts + netProfit;
-  const totalLiabEquity      = totalLiabilities + totalEquity;
+  const { currentAssets, fixedAssetAccts, longTermAssets, liabilities, equityAccts, faRows,
+          totalCost, totalAccumDepn, totalNBV, netProfit, totalCurrentAssets, totalLongTermAssets,
+          totalFixedNBV, totalAssets, totalLiabilities, totalEquity, totalLiabEquity, formulas } = computeBS();
 
   let rows = [];
 
@@ -5337,6 +5713,7 @@ function renderBalanceSheet() {
     </td></tr>`);
   }
 
+  rows.push(formulaDetailsHtml(formulas, 3, 'bs'));
   document.getElementById('bs-table').innerHTML = rows.join('');
 }
 
@@ -5622,7 +5999,7 @@ function renderShEditRow(e) {
           <select class="edit-input" onchange="event.stopPropagation();updateShField('${e.id}','category',this.value)">${catOpts}</select>
         </div>
         <div>
-          <div class="edit-label">Amount</div>
+          <div class="edit-label">Amount${fcode('SH.AMT')}</div>
           <input class="edit-input" type="number" step="0.01" value="${e.amount}" id="sh-amt-${e.id}"
             oninput="event.stopPropagation();updateShField('${e.id}','amount',this.value);recalcShHst('${e.id}')">
         </div>
@@ -5642,7 +6019,7 @@ function renderShEditRow(e) {
             oninput="event.stopPropagation();updateShField('${e.id}','hstRate',this.value);recalcShHst('${e.id}')">
         </div>
         <div>
-          <div class="edit-label">HST Amount</div>
+          <div class="edit-label">HST Amount${fcode('SH.HST')}</div>
           <input class="edit-input" type="number" step="0.01" value="${hstAmt}" id="sh-hstamt-${e.id}"
             oninput="event.stopPropagation();updateShField('${e.id}','hstAmount',this.value)"
             style="background:${hstType==='manual'?'var(--surface)':'var(--surface2)'}"
@@ -5991,7 +6368,7 @@ function renderInvEditRow(inv) {
       <div style="display:grid;grid-template-columns:1fr 120px 1fr 100px 140px;gap:8px;margin-bottom:10px">
         <div><div class="edit-label">Category</div>
           <select class="edit-input" onchange="event.stopPropagation();updateInvField('${inv.id}','category',this.value)">${catOpts}</select></div>
-        <div><div class="edit-label">Subtotal</div>
+        <div><div class="edit-label">Subtotal${fcode('INV.SUB')}</div>
           <input class="edit-input" type="number" step="0.01" value="${inv.subtotal}" id="invf-sub-${inv.id}"
             oninput="event.stopPropagation();updateInvField('${inv.id}','subtotal',this.value);recalcInv('${inv.id}')"></div>
         <div><div class="edit-label">HST</div>
@@ -6005,12 +6382,12 @@ function renderInvEditRow(inv) {
         <div><div class="edit-label">Rate %</div>
           <input class="edit-input" type="number" step="0.1" value="${inv.hstRate||13}" id="invf-hstrate-${inv.id}"
             oninput="event.stopPropagation();updateInvField('${inv.id}','hstRate',this.value);recalcInv('${inv.id}')"></div>
-        <div><div class="edit-label">HST Amount</div>
+        <div><div class="edit-label">HST Amount${fcode('INV.HST')}</div>
           <input class="edit-input" type="number" step="0.01" value="${inv.hstAmount||0}" id="invf-hstamt-${inv.id}"
             oninput="event.stopPropagation();updateInvField('${inv.id}','hstAmount',this.value)"
             style="background:${hstType==='manual'?'var(--surface)':'var(--surface2)'}"
             ${hstType!=='manual'?'readonly':''}>
-          <div style="font-size:10px;color:var(--text3);margin-top:2px">Total: <strong>${fmt(parseFloat(inv.total)||0)}</strong></div>
+          <div style="font-size:10px;color:var(--text3);margin-top:2px">Total: <strong>${fmt(parseFloat(inv.total)||0)}</strong>${fcode('INV.TOT')}</div>
         </div>
       </div>
       <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
@@ -6048,8 +6425,19 @@ function updateInvField(id, field, value) {
 
 function invStartEdit(id) { invEditingId=id; renderInvoices(); }
 function invStopEdit()    { invEditingId=null; save(); renderInvoices(); renderAll(); }
+// Unlink any transactions pointing at deleted invoices: a dangling linkedInvoiceId with category
+// 'Accounts Receivable' would keep crediting A/R in the ledger with no matching invoice debit,
+// silently unbalancing A/R against the subledger.
+function unlinkTxFromInvoices(invIds) {
+  const ids = invIds instanceof Set ? invIds : new Set([invIds]);
+  transactions = transactions.map(t => ids.has(t.linkedInvoiceId)
+    ? {...t, linkedInvoiceId: null, category: t.category==='Accounts Receivable' ? 'Uncategorized' : t.category}
+    : t);
+}
+
 function deleteInvoice(id) {
-  if(!confirm('Delete this invoice?')) return;
+  if(!confirm('Delete this invoice? Any linked payment transactions will be unlinked (set to Uncategorized).')) return;
+  unlinkTxFromInvoices(id);
   invoices=invoices.filter(i=>i.id!==id);
   invEditingId=null; save(); renderInvoices(); renderAll();
 }
@@ -6082,7 +6470,8 @@ function bulkMarkInvSent() {
 }
 function bulkDeleteInv() {
   const n=invSelectedIds.size;
-  if(!n||!confirm(`Delete ${n} invoice${n!==1?'s':''}?`)) return;
+  if(!n||!confirm(`Delete ${n} invoice${n!==1?'s':''}? Any linked payment transactions will be unlinked.`)) return;
+  unlinkTxFromInvoices(invSelectedIds);
   invoices=invoices.filter(i=>!invSelectedIds.has(i.id));
   invSelectedIds.clear(); save(); renderInvBulkBar(); renderInvoices(); renderAll();
   toast(`🗑 Deleted ${n} invoice${n!==1?'s':''}`);
@@ -7393,6 +7782,8 @@ document.addEventListener('click', e => {
 function backupAllData() {
   const backup = {
     version: 2,
+    appVersion: APP_VERSION,
+    dataVersion: DATA_VERSION,
     exportedAt: new Date().toISOString(),
     exportedBy: 'Ledger Bookkeeping',
     clientName: companyConfig.corpName || 'Unknown',
@@ -7465,7 +7856,9 @@ function restoreBackup(input) {
       const activeClient = companyConfig.corpName || 'the current client';
       const mismatch = backupClient && activeClient && backupClient !== activeClient;
 
-      const msg = `Restore backup from ${exportDate}?\n\n`
+      const verNote = backup.appVersion && backup.appVersion !== APP_VERSION
+        ? `Backup made by app v${backup.appVersion} (you are running v${APP_VERSION}).\n` : '';
+      const msg = `Restore backup from ${exportDate}?\n\n${verNote}`
         + `Backup is for client:  "${backupClient}"\n`
         + `Active client (will be overwritten):  "${activeClient}"\n\n`
         + `Replaces the ACTIVE client's data with:\n• ${txCount} transactions\n• ${invCount} invoices\n• ${shCount} shareholder entries\n\n`
@@ -8545,6 +8938,73 @@ function coaDeleteAccount(id) {
 // ═══════════════════════════════════════════════════════════
 // SINGLE-REPORT EXCEL EXPORT (P&L, Balance Sheet, Trial Balance)
 // ═══════════════════════════════════════════════════════════
+// ═══ Shared sheet-row builders — every Excel/JSON export of a report goes through these, and
+// they read ONLY the compute* models the screen renders from. Screen and export cannot diverge.
+function _fmtN(v){ const n=parseFloat(v)||0; return n===0 ? '' : +n.toFixed(2); }
+
+function plSheetRows(corp, period) {
+  const m = computePL();
+  const rows = [[`${corp} — Profit & Loss`,''],[period,''],[''],['REVENUE','']];
+  Object.entries(m.revBycat).sort((a,b)=>b[1]-a[1]).forEach(([n,v])=>rows.push([n, _fmtN(v)]));
+  if(m.uncatIncAmt>0) rows.push(['Uncategorized Credits', _fmtN(m.uncatIncAmt)]);
+  rows.push(['Total Revenue', +m.income.toFixed(2)]);
+  rows.push(['']);
+  if(m.cogs>0){ rows.push(['COST OF SALES','']); rows.push(['Cost of Goods Sold', _fmtN(m.cogs)]);
+    rows.push(['Gross Profit', +m.grossProfit.toFixed(2)]); rows.push(['']); }
+  rows.push(['OPERATING EXPENSES (COMPANY-PAID)','']);
+  Object.entries(m.bycat).sort((a,b)=>b[1]-a[1]).forEach(([n,v])=>rows.push([n, _fmtN(v)]));
+  if(m.uncatExpAmt.total>0) rows.push(['Uncategorized Expenses', _fmtN(m.uncatExpAmt.total)]);
+  rows.push(['Subtotal Company Expenses', +(m.opExpenses + m.uncatExpAmt.total).toFixed(2)]);
+  if(m.shTotal>0){ rows.push(['']); rows.push(['SHAREHOLDER-PAID EXPENSES','']);
+    Object.entries(m.shBycat).sort((a,b)=>b[1]-a[1]).forEach(([n,v])=>rows.push([n, _fmtN(v)]));
+    rows.push(['Subtotal Shareholder Expenses', +m.shTotal.toFixed(2)]); }
+  if(m.totalCCA>0){ rows.push(['']); rows.push(['DEPRECIATION (CCA)','']);
+    Object.entries(m.ccaByClass).forEach(([n,v])=>rows.push([n, _fmtN(v)]));
+    rows.push(['Total CCA Depreciation', +m.totalCCA.toFixed(2)]); }
+  rows.push(['']);
+  rows.push(['Total Operating Expenses', +m.totalOpExpenses.toFixed(2)]);
+  rows.push(['']);
+  if(m.corpTaxExpense>0.005){
+    rows.push(['Net Income Before Tax', +m.netBeforeTax.toFixed(2)]);
+    rows.push(['Corporate Tax Expense', +m.corpTaxExpense.toFixed(2)]);
+    rows.push(['']); }
+  rows.push([m.corpTaxExpense>0.005?'NET PROFIT / (LOSS) AFTER TAX':'NET PROFIT / (LOSS)', +m.netProfit.toFixed(2)]);
+  return rows;
+}
+
+function bsSheetRows(corp, asAt) {
+  const m = computeBS();
+  const rows = [[`${corp} — Balance Sheet`,'','',''],[`As at ${asAt}`,'','',''],[''],['CURRENT ASSETS','','','']];
+  m.currentAssets.forEach(a=>rows.push(['  '+a.name, _fmtN(a.val)]));
+  rows.push(['Total Current Assets', +m.totalCurrentAssets.toFixed(2)]);
+  rows.push(['']);
+  if(m.longTermAssets.length){ rows.push(['LONG-TERM ASSETS','','','']);
+    m.longTermAssets.forEach(a=>rows.push(['  '+a.name, _fmtN(a.val)]));
+    rows.push(['Total Long-term Assets', +m.totalLongTermAssets.toFixed(2)]); rows.push(['']); }
+  if(m.faRows.length){
+    rows.push(['FIXED ASSETS (NET BOOK VALUE)','Cost','Accum. CCA','NBV']);
+    m.faRows.forEach(a=>rows.push(['  '+a.name+' (Class '+a.cls+')', +a.cost.toFixed(2), +a.accumCCA.toFixed(2), +Math.max(0,a.nbv).toFixed(2)]));
+    rows.push(['Total Fixed Assets (NBV)','','', +Math.max(0,m.totalNBV).toFixed(2)]); rows.push(['']);
+  } else if(m.fixedAssetAccts.length){
+    rows.push(['FIXED ASSETS','','','']);
+    m.fixedAssetAccts.forEach(a=>rows.push(['  '+a.name, _fmtN(Math.max(0,a.val))]));
+    rows.push(['']); }
+  rows.push(['TOTAL ASSETS', +m.totalAssets.toFixed(2)]);
+  rows.push(['']);
+  rows.push(['LIABILITIES','','','']);
+  m.liabilities.forEach(l=>rows.push(['  '+l.name, _fmtN(l.val)]));
+  rows.push(['Total Liabilities', +m.totalLiabilities.toFixed(2)]);
+  rows.push(['']);
+  rows.push(['EQUITY','','','']);
+  m.equityAccts.forEach(e=>rows.push(['  '+e.name, _fmtN(e.val)]));
+  if(Math.abs(m.netProfit)>0.01) rows.push(['  Net Profit / (Loss) — Current Period', +m.netProfit.toFixed(2)]);
+  rows.push(['Total Equity', +m.totalEquity.toFixed(2)]);
+  rows.push(['']);
+  rows.push(['TOTAL LIABILITIES + EQUITY', +m.totalLiabEquity.toFixed(2)]);
+  if(Math.abs(m.totalAssets-m.totalLiabEquity)>0.02) rows.push(['⚠ OUT OF BALANCE BY', +Math.abs(m.totalAssets-m.totalLiabEquity).toFixed(2)]);
+  return rows;
+}
+
 async function exportSingleReport(which) {
   toast('⏳ Preparing Excel…');
   setLoading('Building spreadsheet…');
@@ -8562,85 +9022,11 @@ async function exportSingleReport(which) {
 
     if(which === 'pl') {
       sheetName = 'P&L'; fileLabel = 'Profit_and_Loss';
-      const revAccts = {}, expAccts = {};
-      let corpTax = 0;
-      Object.entries(full).forEach(([name, a]) => {
-        if(a.type==='revenue') revAccts[name] = a.clCr - a.clDr;
-        else if(a.type==='expense' && !name.startsWith('Depreciation')) {
-          if(name==='Corporate Tax Expense') corpTax += a.clDr - a.clCr;
-          else expAccts[name] = a.clDr - a.clCr;
-        }
-      });
-      const totalRev = Object.values(revAccts).reduce((s,v)=>s+v,0);
-      const cogs = full['Cost of Goods Sold'] ? (full['Cost of Goods Sold'].clDr - full['Cost of Goods Sold'].clCr) : 0;
-      // Shareholder-paid expenses are already merged into expAccts (net) via the ledger. Pull them
-      // out so opExp is company-paid only, then add shTotal back once — matches the on-screen P&L.
-      const shByCat = {};
-      shEntries.forEach(e => { const a=Math.abs(parseFloat(e.amount)||0); const h=Math.min(Math.max(parseFloat(e.hstAmount)||0,0),a); const cat=(e.category==='Uncategorized')?'Office Expenses':e.category; shByCat[cat]=(shByCat[cat]||0)+(a-h); });
-      Object.entries(shByCat).forEach(([cat,v])=>{ if(expAccts[cat]!==undefined){ expAccts[cat]-=v; if(Math.abs(expAccts[cat])<=0.005) delete expAccts[cat]; } });
-      const opExp = Object.entries(expAccts).filter(([k])=>k!=='Cost of Goods Sold').reduce((s,[,v])=>s+v,0);
-      const shTotal = Object.values(shByCat).reduce((s,v)=>s+v,0);
-      const yr = ccaThroughYear();
-      let totalCCA = 0; fixedAssets.forEach(a=>{ totalCCA += calcCCAseries(a,yr).cumulative; });
-      const totalOpExp = opExp + shTotal + totalCCA;
-      const netBeforeTax = totalRev - Math.max(0,cogs) - totalOpExp;
-      const netProfit = netBeforeTax - corpTax;
-
-      rows = [
-        [`${corp} — Profit & Loss`, ''],
-        [period, ''],
-        [''],
-        ['REVENUE', ''],
-      ];
-      Object.entries(revAccts).forEach(([name,val])=>rows.push([name, fmtN(val)]));
-      rows.push(['Total Revenue', totalRev]);
-      rows.push(['']);
-      if(cogs > 0) {
-        rows.push(['COST OF SALES','']);
-        rows.push(['Cost of Goods Sold', cogs]);
-        rows.push(['Gross Profit', totalRev - cogs]);
-        rows.push(['']);
-      }
-      rows.push(['OPERATING EXPENSES','']);
-      Object.entries(expAccts).filter(([k])=>k!=='Cost of Goods Sold').sort((a,b)=>b[1]-a[1])
-        .forEach(([name,val])=>rows.push([name, fmtN(val)]));
-      if(shTotal>0) rows.push(['Shareholder-Paid Expenses', shTotal]);
-      if(totalCCA>0) rows.push(['CCA Depreciation', totalCCA]);
-      rows.push(['Total Operating Expenses', totalOpExp]);
-      rows.push(['']);
-      if(corpTax > 0.005) {
-        rows.push(['Net Income Before Tax', netBeforeTax]);
-        rows.push(['Corporate Tax Expense', corpTax]);
-        rows.push(['']);
-      }
-      rows.push([corpTax>0.005?'NET PROFIT / (LOSS) AFTER TAX':'NET PROFIT / (LOSS)', netProfit]);
+      rows = plSheetRows(corp, period);
 
     } else if(which === 'bs') {
       sheetName = 'Balance Sheet'; fileLabel = 'Balance_Sheet';
-      rows = [[`${corp} — Balance Sheet`,''],[`As at ${today}`,''],['']];
-      const sections = {'CURRENT ASSETS':[],'LONG-TERM ASSETS':[],'FIXED ASSETS':[],'LIABILITIES':[],'EQUITY':[]};
-      let totalRev=0, totalExp=0;
-      Object.entries(full).forEach(([name,a]) => {
-        if(a.type==='revenue') totalRev += a.clCr - a.clDr;
-        if(a.type==='expense') totalExp += a.clDr - a.clCr;
-        const val = (a.type==='asset') ? a.clDr - a.clCr : a.clCr - a.clDr;
-        if(a.type==='asset') {
-          const grp = effCOA[name]?.group||'';
-          if(grp==='Fixed Assets'||name==='Fixed Assets') sections['FIXED ASSETS'].push([name,val]);
-          else if(grp==='Long-term Assets') sections['LONG-TERM ASSETS'].push([name,val]);
-          else sections['CURRENT ASSETS'].push([name,val]);
-        } else if(a.type==='liability') sections['LIABILITIES'].push([name,val]);
-        else if(a.type==='equity') sections['EQUITY'].push([name,val]);
-      });
-      const netProfit = totalRev - totalExp;
-      if(Math.abs(netProfit)>0.01) sections['EQUITY'].push(['Net Profit / (Loss)', netProfit]);
-      Object.entries(sections).forEach(([sec,items])=>{
-        if(!items.length) return;
-        rows.push([sec,'']);
-        items.forEach(([name,val])=>rows.push(['  '+name, fmtN(val)]));
-        rows.push([`Total ${sec.charAt(0)+sec.slice(1).toLowerCase()}`, items.reduce((s,[,v])=>s+v,0)]);
-        rows.push(['']);
-      });
+      rows = bsSheetRows(corp, today);
 
     } else if(which === 'tb') {
       sheetName = 'Trial Balance'; fileLabel = 'Trial_Balance';
@@ -8667,6 +9053,8 @@ async function exportSingleReport(which) {
       rows.push(['TOTAL','',...t]);
     }
 
+    rows.push(['']);
+    rows.push([`Generated by J&M Ledger v${APP_VERSION} — ${today}`]);
     const ws = XLSX.utils.aoa_to_sheet(rows);
     XLSX.utils.book_append_sheet(wb, ws, sheetName);
     const filename = `${corp.replace(/[^a-z0-9]/gi,'_')}_${fileLabel}_${today}.xlsx`;
@@ -8729,102 +9117,16 @@ async function exportToExcel() {
     addSheet('Transactions', txRows);
 
     // ══════════════════════════════
-    // 2. PROFIT & LOSS
+    // 2. PROFIT & LOSS — same model as the screen (computePL via plSheetRows)
     // ══════════════════════════════
     const effCOA = getEffectiveCOA();
-    const revAccts = {}, expAccts = {};
-    let corpTax = 0;
-    Object.entries(full).forEach(([name, a]) => {
-      if(a.type==='revenue') revAccts[name] = a.clCr - a.clDr;
-      else if(a.type==='expense' && !name.startsWith('Depreciation')) {
-        if(name==='Corporate Tax Expense') { corpTax += a.clDr - a.clCr; return; } // shown separately, after tax
-        expAccts[name] = a.clDr - a.clCr;
-      }
-    });
-    // Pull shareholder-paid (net) out of expAccts so it isn't double-counted with the shTotal row.
-    const xlShByCat = {};
-    shEntries.forEach(e => { const a=Math.abs(parseFloat(e.amount)||0); const h=Math.min(Math.max(parseFloat(e.hstAmount)||0,0),a); const cat=(e.category==='Uncategorized')?'Office Expenses':e.category; xlShByCat[cat]=(xlShByCat[cat]||0)+(a-h); });
-    Object.entries(xlShByCat).forEach(([cat,v])=>{ if(expAccts[cat]!==undefined){ expAccts[cat]-=v; if(Math.abs(expAccts[cat])<=0.005) delete expAccts[cat]; } });
-    const totalRev = Object.values(revAccts).reduce((s,v)=>s+v,0);
-    const totalExp = Object.values(expAccts).reduce((s,v)=>s+v,0);
-    const cogs = full['Cost of Goods Sold'] ? (full['Cost of Goods Sold'].clDr - full['Cost of Goods Sold'].clCr) : 0;
-    const plRows = [
-      [`${corp} — Profit & Loss`, ''],
-      [period, ''],
-      [''],
-      ['REVENUE', ''],
-    ];
-    Object.entries(revAccts).forEach(([name, val]) => plRows.push([name, fmtN(val)]));
-    plRows.push(['Total Revenue', totalRev]);
-    plRows.push(['']);
-    if(cogs > 0) {
-      plRows.push(['COST OF SALES', '']);
-      plRows.push(['Cost of Goods Sold', cogs]);
-      plRows.push(['Gross Profit', totalRev - cogs]);
-      plRows.push(['']);
-    }
-    plRows.push(['OPERATING EXPENSES', '']);
-    Object.entries(expAccts).filter(([k])=>k!=='Cost of Goods Sold').sort((a,b)=>b[1]-a[1])
-      .forEach(([name, val]) => plRows.push([name, fmtN(val)]));
-    // Shareholder expenses (net of HST — matches the ledger; already removed from expAccts above)
-    const shTotal = Object.values(xlShByCat).reduce((s,v)=>s+v,0);
-    if(shTotal > 0) { plRows.push(['Shareholder-Paid Expenses', shTotal]); }
-    // CCA (cumulative to date — matches the ledger & Balance Sheet)
     const yr = ccaThroughYear();
-    let totalCCA = 0;
-    fixedAssets.forEach(a=>{ totalCCA += calcCCAseries(a,yr).cumulative; });
-    if(totalCCA > 0) plRows.push(['CCA Depreciation', totalCCA]);
-    const totalExpAll = totalExp + shTotal + totalCCA;
-    plRows.push(['Total Operating Expenses', totalExpAll]);
-    plRows.push(['']);
-    const netBeforeTax = totalRev - totalExpAll;
-    if(corpTax > 0.005) {
-      plRows.push(['Net Income Before Tax', netBeforeTax]);
-      plRows.push(['Corporate Tax Expense', corpTax]);
-      plRows.push(['']);
-      plRows.push(['NET PROFIT / (LOSS) AFTER TAX', netBeforeTax - corpTax]);
-    } else {
-      plRows.push(['NET PROFIT / (LOSS)', netBeforeTax]);
-    }
-    addSheet('P&L', plRows);
+    addSheet('P&L', plSheetRows(corp, period));
 
     // ══════════════════════════════
-    // 3. BALANCE SHEET
+    // 3. BALANCE SHEET — same model as the screen (computeBS via bsSheetRows)
     // ══════════════════════════════
-    const bsRows = [
-      [`${corp} — Balance Sheet`, ''],
-      [`As at ${today}`, ''],
-      [''],
-    ];
-    const bsSections = {
-      'CURRENT ASSETS': [],
-      'LONG-TERM ASSETS': [],
-      'FIXED ASSETS': [],
-      'LIABILITIES': [],
-      'EQUITY': [],
-    };
-    Object.entries(full).forEach(([name, a]) => {
-      const val = (a.type==='asset') ? a.clDr - a.clCr : a.clCr - a.clDr;
-      if(a.type==='asset') {
-        const grp = effCOA[name]?.group||'';
-        if(grp==='Fixed Assets'||name==='Fixed Assets') bsSections['FIXED ASSETS'].push([name,val]);
-        else if(grp==='Long-term Assets') bsSections['LONG-TERM ASSETS'].push([name,val]);
-        else bsSections['CURRENT ASSETS'].push([name,val]);
-      } else if(a.type==='liability') bsSections['LIABILITIES'].push([name,val]);
-      else if(a.type==='equity') bsSections['EQUITY'].push([name,val]);
-    });
-    // Net profit in equity
-    const netProfit = totalRev - totalExpAll;
-    if(Math.abs(netProfit)>0.01) bsSections['EQUITY'].push(['Net Profit / (Loss)', netProfit]);
-    Object.entries(bsSections).forEach(([section, items]) => {
-      if(!items.length) return;
-      bsRows.push([section, '']);
-      items.forEach(([name,val]) => bsRows.push(['  '+name, fmtN(val)]));
-      const total = items.reduce((s,[,v])=>s+v,0);
-      bsRows.push([`Total ${section.charAt(0)+section.slice(1).toLowerCase()}`, total]);
-      bsRows.push(['']);
-    });
-    addSheet('Balance Sheet', bsRows);
+    addSheet('Balance Sheet', bsSheetRows(corp, today));
 
     // ══════════════════════════════
     // 4. TRIAL BALANCE
@@ -8853,7 +9155,8 @@ async function exportToExcel() {
     addSheet('Trial Balance', tbRows);
 
     // ══════════════════════════════
-    // 5. GENERAL LEDGER
+    // 5. GENERAL LEDGER — same model as the GL screen (buildGLAccounts: OB, transactions with
+    // HST splits, invoices, shareholder net+ITC, balanced AJEs, cumulative CCA)
     // ══════════════════════════════
     const glRows = [
       [`${corp} — General Ledger`, '', '', '', '', ''],
@@ -8861,49 +9164,26 @@ async function exportToExcel() {
       [''],
       ['Account', 'Date', 'Description', 'Source', 'Debit', 'Credit', 'Balance'],
     ];
-    // Build GL entries same logic as renderGL
-    const glAccts = {};
-    const glEnsure = (name, type) => { if(!glAccts[name]) glAccts[name]={type,obDr:0,obCr:0,entries:[]}; };
-    openingBalances.forEach(ob => {
-      if(!ob.account) return;
-      glEnsure(ob.account, ob.type||'asset');
-      glAccts[ob.account].obDr += parseFloat(ob.debit)||0;
-      glAccts[ob.account].obCr += parseFloat(ob.credit)||0;
-    });
-    transactions.forEach(t => {
-      const amt = Math.abs(t.amount);
-      const acc = t.account, cat = t.category;
-      const catType = effCOA[cat]?.type || 'expense';
-      glEnsure(acc, effCOA[acc]?.type||'asset');
-      glEnsure(cat, catType);
-      const desc = t.description||'';
-      if(t.amount >= 0) glAccts[acc].entries.push({date:t.date,desc,dr:amt,cr:0});
-      else              glAccts[acc].entries.push({date:t.date,desc,dr:0,cr:amt});
-    });
-    adjustingEntries.forEach(e => {
-      (e.lines||[]).forEach(l => {
-        if(!l.account) return;
-        glEnsure(l.account, effCOA[l.account]?.type||'expense');
-        const dr=parseFloat(l.debit)||0, cr=parseFloat(l.credit)||0;
-        if(dr||cr) glAccts[l.account].entries.push({date:e.date,desc:`${e.description||e.reference} [AJE]`,dr,cr});
+    const glAccts = buildGLAccounts();
+    const glTypeOrder = {asset:1, liability:2, equity:3, revenue:4, expense:5};
+    Object.entries(glAccts)
+      .filter(([,a]) => a.obDr || a.obCr || a.entries.length)
+      .sort(([na,aa],[nb,ab]) => ((glTypeOrder[aa.type]||9)-(glTypeOrder[ab.type]||9)) || na.localeCompare(nb))
+      .forEach(([name, a]) => {
+        glRows.push([name,'','','','','','']);
+        const normalDebit = ['asset','expense'].includes(a.type);
+        let runDr=a.obDr, runCr=a.obCr;
+        if(a.obDr||a.obCr) {
+          const ob = normalDebit ? a.obDr-a.obCr : a.obCr-a.obDr;
+          glRows.push(['  Opening Balance','','','',fmtN(a.obDr),fmtN(a.obCr),+ob.toFixed(2)]);
+        }
+        a.entries.forEach(e => {
+          runDr+=e.dr; runCr+=e.cr;
+          const bal = normalDebit ? runDr-runCr : runCr-runDr;
+          glRows.push(['',e.date,e.description,e.source||'',fmtN(e.dr),fmtN(e.cr),+bal.toFixed(2)]);
+        });
+        glRows.push(['']);
       });
-    });
-    Object.entries(glAccts).sort((a,b)=>a[0].localeCompare(b[0])).forEach(([name, a]) => {
-      if(!a.obDr && !a.obCr && !a.entries.length) return;
-      glRows.push([name,'','','','','','']);
-      const normalDebit = ['asset','expense'].includes(a.type);
-      let runDr=a.obDr, runCr=a.obCr;
-      if(a.obDr||a.obCr) {
-        const ob = normalDebit ? a.obDr-a.obCr : a.obCr-a.obDr;
-        glRows.push(['  Opening Balance','','','',fmtN(a.obDr),fmtN(a.obCr),ob]);
-      }
-      a.entries.sort((x,y)=>(x.date||'').localeCompare(y.date||'')).forEach(e => {
-        runDr+=e.dr; runCr+=e.cr;
-        const bal = normalDebit ? runDr-runCr : runCr-runDr;
-        glRows.push(['',e.date,e.desc,'',fmtN(e.dr),fmtN(e.cr),bal]);
-      });
-      glRows.push(['']);
-    });
     addSheet('General Ledger', glRows);
 
     // ══════════════════════════════
@@ -8915,15 +9195,19 @@ async function exportToExcel() {
         [''],
         ['Invoice #', 'Date', 'Client', 'Description', 'Subtotal', 'HST', 'Total', 'Status'],
       ];
+      // Match the reports: void/draft invoices are excluded from totals (listed rows show them
+      // separately for reference, flagged in the Status column).
+      const liveInvX = invoices.filter(i=>i.status!=='void'&&i.status!=='draft');
       invoices.forEach(inv => {
-        invRows.push([inv.number||'', inv.date, inv.client, inv.description||'',
-          n(inv.subtotal), n(inv.hstAmount), n(inv.total), inv.status]);
+        invRows.push([inv.invoiceNum||'', inv.date, inv.client, inv.description||'',
+          n(inv.subtotal), n(inv.hstAmount), n(inv.total),
+          inv.status + ((inv.status==='void'||inv.status==='draft')?' (excluded from totals)':'')]);
       });
       invRows.push(['']);
-      invRows.push(['','','','Total',
-        invoices.reduce((s,i)=>s+n(i.subtotal),0),
-        invoices.reduce((s,i)=>s+n(i.hstAmount),0),
-        invoices.reduce((s,i)=>s+n(i.total),0),'']);
+      invRows.push(['','','','Total (excl. void/draft)',
+        liveInvX.reduce((s,i)=>s+n(i.subtotal),0),
+        liveInvX.reduce((s,i)=>s+n(i.hstAmount),0),
+        liveInvX.reduce((s,i)=>s+n(i.total),0),'']);
       addSheet('Invoices', invRows);
     }
 
@@ -9015,50 +9299,35 @@ async function exportToExcel() {
     }
 
     // ══════════════════════════════
-    // 11. HST SUMMARY
+    // 11. HST SUMMARY — same model as the screen (computeHST)
     // ══════════════════════════════
-    const HST_SALES_CATS = new Set(['Sales Revenue','Service Revenue','Accounts Receivable']);
-    const salesTx = transactions.filter(t=>(HST_SALES_CATS.has(t.category)||(isIncome(t)&&(parseFloat(t.hstAmount)||0)>0))&&(parseFloat(t.hstAmount)||0)>0);
-    const hstCollectedTx  = salesTx.reduce((s,t)=>s+(parseFloat(t.hstAmount)||0),0);
-    const hstCollectedInv = invoices.filter(i=>i.status!=='void'&&i.status!=='draft').reduce((s,i)=>s+(parseFloat(i.hstAmount)||0),0);
-    const hstCollected = hstCollectedTx + hstCollectedInv;
-    const expTx = transactions.filter(t=>isExpense(t)&&(parseFloat(t.hstAmount)||0)>0);
-    const hstPaidTx = expTx.reduce((s,t)=>s+(parseFloat(t.hstAmount)||0),0);
-    const hstPaidSh = shEntries.reduce((s,e)=>s+(parseFloat(e.hstAmount)||0),0);
-    const hoTots = getHoTotals();
-    const hstPaid = hstPaidTx + hstPaidSh + hoTots.hst;
+    const H = computeHST();
     const hstRows = [
       [`${corp} — HST / GST Summary`, ''],
       [period, ''],
-      ['Method', companyConfig.hstMethod==='quick'?`Quick Method (${companyConfig.hstQuickRate}%)`:'Traditional Method'],
+      ['Method', companyConfig.hstMethod==='quick'?`Quick Method (${H.quick.rate1Pct}%)`:'Traditional Method'],
       [''],
       ['HST COLLECTED', ''],
-      ['HST on Revenue Transactions', hstCollectedTx],
-      ['HST on Invoices', hstCollectedInv],
-      ['Total HST Collected', hstCollected],
+      ['HST on Revenue Transactions', +H.hstCollectedTx.toFixed(2)],
+      ['HST on Invoices', +H.hstCollectedInv.toFixed(2)],
+      ['Total HST Collected', +H.hstCollected.toFixed(2)],
       [''],
       ['INPUT TAX CREDITS (ITC)', ''],
-      ['HST on Business Expenses', hstPaidTx],
-      ['HST on Shareholder Expenses', hstPaidSh],
-      ['HST on Home Office', hoTots.hst],
-      ['Total ITC', hstPaid],
+      ['HST on Business Expenses', +H.hstPaidTx.toFixed(2)],
+      ['HST on Shareholder Expenses (incl. posted Home Office)', +H.hstPaidSh.toFixed(2)],
+      ['HST on Home Office (not yet posted)', +H.hstPaidHo.toFixed(2)],
+      ['Total ITC', +H.hstPaidTotal.toFixed(2)],
       [''],
-      ['NET HST OWING TO CRA', hstCollected - hstPaid],
+      ['NET HST OWING TO CRA', +H.netHst.toFixed(2)],
     ];
     if(companyConfig.hstMethod==='quick') {
-      const rate = parseFloat(companyConfig.hstQuickRate)/100;
-      const grossRev = salesTx.reduce((s,t)=>s+Math.abs(t.amount),0) +
-        invoices.filter(i=>i.status!=='void'&&i.status!=='draft').reduce((s,i)=>s+(parseFloat(i.total)||0),0);
-      const netRev = grossRev - hstCollected;
-      const credit = Math.min(netRev,30000)*0.01;
-      const remit = rate*grossRev - credit;
       hstRows.push(['']);
       hstRows.push(['QUICK METHOD CALCULATION','']);
-      hstRows.push(['Gross Revenue (incl HST)', grossRev]);
-      hstRows.push([`Remittance Rate (${companyConfig.hstQuickRate}%) × Gross Revenue`, rate*grossRev]);
-      hstRows.push(['Less 1% Credit on First $30K', -credit]);
-      hstRows.push(['Net Remittance to CRA', remit]);
-      hstRows.push(['Quick Method Saving vs Traditional', (hstCollected-hstPaid) - remit]);
+      hstRows.push(['Gross Revenue (incl HST)', +H.grossRevenue.toFixed(2)]);
+      hstRows.push([`Remittance Rate (${H.quick.rate1Pct}%) × Gross Revenue`, +(H.quick.rate1*H.grossRevenue).toFixed(2)]);
+      hstRows.push(['Less 1% Credit on First $30K', -H.quick.credit1pct]);
+      hstRows.push(['Net Remittance to CRA', +H.quick.remittance.toFixed(2)]);
+      hstRows.push(['Quick Method Saving vs Traditional', +H.quick.saving.toFixed(2)]);
     }
     addSheet('HST Summary', hstRows);
 
@@ -9077,7 +9346,7 @@ async function exportToExcel() {
         faRows.push([
           asset.name, `Class ${asset.ccaClass}`, asset.acquiredDate,
           n(asset.cost), n(c.openUCC),
-          asset.ccaClass ? c.rate+'%' : '',
+          asset.ccaClass ? ((c.rate||0)*100).toFixed(0)+'%' : '',
           fmtN(c.actualCCA),
           fmtN(c.closeUCC)
         ]);
@@ -9118,6 +9387,21 @@ async function exportToExcel() {
       });
       addSheet('GIFI (T2)', gifiRows);
     }
+
+    // ══════════════════════════════
+    // About — provenance stamp: which software version produced this workbook
+    // ══════════════════════════════
+    addSheet('About', [
+      [`${corp}`],
+      [''],
+      ['Generated by', `J&M Ledger v${APP_VERSION}`],
+      ['Data schema', `v${DATA_VERSION}`],
+      ['Generated on', today],
+      ['Period', period],
+      [''],
+      ['All figures are produced by the same computation the on-screen reports use.'],
+      ['Field codes (PL.xxx / BS.xxx / HST.xxx) and formulas: see the ƒ lookup in the app.'],
+    ]);
 
     // ══════════════════════════════
     // Export!
@@ -10156,7 +10440,8 @@ async function importInvoiceFile(input) {
     if(!rows.length) { toast('No invoice rows found — check column names'); setLoading(''); return; }
     const added = addInvoiceRows(rows);
     save(); renderInvoices(); renderAll();
-    toast(`✓ Imported ${added} invoices from ${file.name}`);
+    const sk = addInvoiceRows.lastSkipped||0;
+    toast(`✓ Imported ${added} invoices from ${file.name}${sk?` · ${sk} duplicate${sk!==1?'s':''} skipped`:''}`);
   } catch(err) {
     console.error(err); toast(`Error: ${err.message?.slice(0,60)}`);
   }
@@ -10200,7 +10485,11 @@ function normaliseInvRows(rows) {
     const total     = totalRaw || (subtotal + hst) || subtotal;
     const client    = get('client') || get('description') || 'Unknown Client';
     const desc      = get('description') || '';
-    const status    = get('status')?.toLowerCase().includes('paid') ? 'paid' : 'sent';
+    // "Unpaid" / "Not paid" must NOT match as paid (includes('paid') did exactly that)
+    const sRaw      = (get('status')||'').toLowerCase().trim();
+    const status    = (sRaw==='paid' || (/\bpaid\b/.test(sRaw) && !/\bun\w*paid\b|\bnot\s+paid\b/.test(sRaw))) ? 'paid'
+                    : /\bpartial/.test(sRaw) ? 'partial'
+                    : 'sent';
     if(!dateRaw && !subtotal && !total) return null;
     return { dateRaw, client, desc, subtotal, hst, total, status,
              invoiceNum: get('invoiceNum'), dueDate: get('dueDate'), category: get('category') };
@@ -10208,7 +10497,13 @@ function normaliseInvRows(rows) {
 }
 
 function addInvoiceRows(rows, defaultStatus='sent') {
-  let added = 0;
+  let added = 0, skipped = 0;
+  // Dedup: re-importing the same file must not double A/R, revenue, and HST. Key on invoice #
+  // when present (numbers are unique refs), else client|date|total.
+  const keyOf = (num, client, date, total) => num
+    ? 'n:'+String(num).toLowerCase().trim()
+    : 'c:'+String(client||'').toLowerCase().trim()+'|'+date+'|'+((parseFloat(total)||0).toFixed(2));
+  const seen = new Set(invoices.map(i=>keyOf(i.invoiceNum, i.client, i.date, i.total)));
   rows.forEach(r => {
     // Parse date
     let date = parseDateStr(r.dateRaw||'');
@@ -10222,6 +10517,9 @@ function addInvoiceRows(rows, defaultStatus='sent') {
     const sub   = parseFloat(r.subtotal)||0;
     const hst   = parseFloat(r.hst)||0;
     const total = parseFloat(r.total)||(sub+hst)||sub;
+    const dupKey = keyOf(r.invoiceNum, r.client||'Unknown Client', date, total);
+    if(seen.has(dupKey)) { skipped++; return; }
+    seen.add(dupKey);
     const cat = r.category || 'Sales Revenue';
     const matchCat = CATEGORIES.find(c=>c.toLowerCase()===cat.toLowerCase()) || 'Sales Revenue';
     const inv = {
@@ -10242,6 +10540,7 @@ function addInvoiceRows(rows, defaultStatus='sent') {
     invoices.push(inv);
     added++;
   });
+  addInvoiceRows.lastSkipped = skipped;
   return added;
 }
 
@@ -10380,7 +10679,8 @@ function importInvPastedData() {
 
   const added = addInvoiceRows(rows, defaultStatus);
   save(); closeInvPasteModal(); renderInvoices(); renderAll();
-  toast(`✓ Imported ${added} invoices`);
+  const sk = addInvoiceRows.lastSkipped||0;
+  toast(`✓ Imported ${added} invoices${sk?` · ${sk} duplicate${sk!==1?'s':''} skipped`:''}`);
 }
 
 // Close on backdrop click

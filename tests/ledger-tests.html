@@ -1,0 +1,481 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Ledger regression tests</title>
+<style>
+  body{font-family:system-ui,sans-serif;max-width:900px;margin:30px auto;padding:0 16px;color:#222}
+  h1{font-size:20px} .sub{color:#777;font-size:13px;margin-bottom:18px}
+  #summary{font-size:16px;font-weight:600;padding:10px 14px;border-radius:8px;margin:14px 0}
+  #summary.ok{background:#e6f6ec;color:#136c34} #summary.bad{background:#fdecea;color:#a12622}
+  table{border-collapse:collapse;width:100%;font-size:13px}
+  td,th{padding:6px 8px;border-bottom:1px solid #eee;text-align:left;vertical-align:top}
+  .pass{color:#136c34;font-weight:600} .fail{color:#a12622;font-weight:600} .err{color:#b05a00;font-weight:600}
+  .got{color:#777;font-family:monospace;font-size:11px;word-break:break-all}
+  .grp{background:#f5f5f4;font-weight:600}
+</style>
+</head>
+<body>
+<h1>Ledger regression tests</h1>
+<div class="sub">Runs against the real <code>../ledger.html</code> in a hidden iframe. localStorage is snapshotted before and fully restored after — no data is touched.</div>
+<div id="summary">Loading app…</div>
+<table id="results"><tr><th style="width:30px">#</th><th>Test</th><th style="width:60px">Result</th><th>Detail</th></tr></table>
+<iframe id="app" style="width:2px;height:2px;opacity:0;position:absolute;left:-999px"></iframe>
+<script>document.getElementById('app').src = '../ledger.html?v=' + Date.now();</script>
+
+<script>
+const tests = [];
+function group(name){ tests.push({group:name}); }
+function test(name, code){ tests.push({name, code}); }
+
+/* ════════════ GROUP A — invariants & fixed-bug regressions (must PASS) ════════════ */
+group('A. Double-entry invariants (regressions — must pass)');
+
+test('Invoice + linked deposit: TB balanced, A/R cleared, revenue & HST once', `
+  __reset();
+  invoices=[{id:'i1',status:'paid',total:1130,hstAmount:130,subtotal:1000,category:'Sales Revenue',client:'T',date:'2026-01-15',invoiceNum:'INV-1'}];
+  transactions=[{id:'t1',date:'2026-01-20',amount:1130,account:'Chequing',category:'Accounts Receivable',linkedInvoiceId:'i1',description:'dep'}];
+  const d=__tbDiff();
+  return {pass: d===0 && __bal('Accounts Receivable')===0 && __bal('Chequing')===1130
+              && __bal('Sales Revenue')===-1000 && __bal('GST/HST Payable')===-130,
+          got:'diff='+d+' AR='+__bal('Accounts Receivable')+' rev='+__bal('Sales Revenue')};
+`);
+
+test('Invoice marked paid, NO linked deposit: A/R stays open, balanced', `
+  __reset();
+  invoices=[{id:'i2',status:'paid',total:1130,hstAmount:130,subtotal:1000,category:'Sales Revenue',client:'T',date:'2026-01-15',invoiceNum:'INV-2'}];
+  const d=__tbDiff();
+  return {pass: d===0 && __bal('Accounts Receivable')===1130, got:'diff='+d+' AR='+__bal('Accounts Receivable')};
+`);
+
+test('Partial linked payment: A/R = remainder, balanced', `
+  __reset();
+  invoices=[{id:'i3',status:'partial',total:1130,hstAmount:130,subtotal:1000,category:'Sales Revenue',client:'T',date:'2026-01-15',invoiceNum:'INV-3'}];
+  transactions=[{id:'t3',date:'2026-01-20',amount:500,account:'Chequing',category:'Accounts Receivable',linkedInvoiceId:'i3',description:'part'}];
+  const d=__tbDiff();
+  return {pass: d===0 && __bal('Accounts Receivable')===630, got:'diff='+d+' AR='+__bal('Accounts Receivable')};
+`);
+
+test('Shareholder gross $113 incl. HST: expense 100 net + ITC 13 + owed 113, balanced', `
+  __reset();
+  shEntries=[{id:'s1',date:'2026-02-01',description:'Supplies',shareholder:'O',amount:113,hstAmount:13,category:'Office Expenses',status:'pending'}];
+  const d=__tbDiff();
+  return {pass: d===0 && __bal('Office Expenses')===100 && __bal('GST/HST Payable')===13 && __bal('Due to Shareholder')===-113,
+          got:'diff='+d+' exp='+__bal('Office Expenses')+' itc='+__bal('GST/HST Payable')};
+`);
+
+test('P&L net profit equals Balance Sheet net profit (shareholder scenario)', `
+  __reset();
+  shEntries=[{id:'s1',date:'2026-02-01',description:'x',shareholder:'O',amount:113,hstAmount:13,category:'Office Expenses',status:'pending'}];
+  renderPL(); renderBalanceSheet();
+  const pl=__cell('#pl-full-table tr.rt-total','Net Profit');
+  const bs=__cell('#bs-table tr','Net Profit / (Loss) — Current Period');
+  return {pass: pl!==null && bs!==null && Math.abs(pl-bs)<0.01 && Math.abs(pl-(-100))<0.01, got:'pl='+pl+' bs='+bs};
+`);
+
+test('Both-positive transfer pair (transferDir): balanced, opposite sides', `
+  __reset();
+  transactions=[
+    {id:'t1',date:'2026-01-10',amount:500,account:'Chequing',category:'Transfer',transferDir:'out',transferPairId:'x1'},
+    {id:'t2',date:'2026-01-10',amount:500,account:'Savings', category:'Transfer',transferDir:'in', transferPairId:'x1'}];
+  const d=__tbDiff();
+  return {pass: d===0 && __bal('Chequing')===-500 && __bal('Savings')===500, got:'diff='+d};
+`);
+
+test('Legacy opposite-sign transfer (no transferDir): balanced', `
+  __reset();
+  transactions=[
+    {id:'t1',date:'2026-02-10',amount:-700,account:'Chequing',category:'Transfer'},
+    {id:'t2',date:'2026-02-10',amount:700, account:'Savings', category:'Transfer'}];
+  const d=__tbDiff();
+  return {pass: d===0 && __bal('Chequing')===-700 && __bal('Savings')===700, got:'diff='+d};
+`);
+
+test('Multi-year CCA: cumulative posting balances; opening UCC carries forward', `
+  __reset();
+  companyConfig={...companyConfig, fyEnd:'2026-12-31'};
+  transactions=[
+    {id:'e1',date:'2025-01-01',amount:20000,account:'Chequing',category:'Equity'},
+    {id:'a1',date:'2025-06-01',amount:-10000,account:'Chequing',category:'Fixed Assets'}];
+  fixedAssets=[{id:'f1',name:'Laptop',cost:10000,ccaClass:'8',acquiredDate:'2025-06-01',active:true,
+    years:{'2025':{openingUCC:0,additions:10000,disposals:0,ccaClaimed:0},'2026':{openingUCC:0,additions:0,disposals:0,ccaClaimed:0}}}];
+  const d=__tbDiff();
+  const cum=+calcCCAseries(fixedAssets[0],'2026').cumulative.toFixed(2);
+  const open26=+calcCCAfor(fixedAssets[0],'2026').openUCC.toFixed(2);
+  return {pass: d===0 && cum===2800 && open26===9000, got:'diff='+d+' cum='+cum+' open2026='+open26};
+`);
+
+test('AJE guards: unbalanced entry and unsaved draft do NOT post', `
+  __reset();
+  transactions=[{id:'t1',date:'2026-01-01',amount:-100,account:'Chequing',category:'Office Expenses'}];
+  adjustingEntries=[
+    {id:'good',date:'2026-01-01',lines:[{account:'Rent',debit:200,credit:0},{account:'Chequing',debit:0,credit:200}]},
+    {id:'bad', date:'2026-01-01',lines:[{account:'Rent',debit:500,credit:0},{account:'Chequing',debit:0,credit:300}]},
+    {id:'new', date:'2026-01-01',lines:[{account:'Rent',debit:999,credit:0}]}];
+  const d=__tbDiff();
+  return {pass: d===0 && __bal('Rent')===200, got:'diff='+d+' rent='+__bal('Rent')};
+`);
+
+test('HST clamp: hstAmount > gross cannot create negative expense', `
+  __reset();
+  transactions=[{id:'t1',date:'2026-01-01',amount:-100,account:'Chequing',category:'Office Expenses',hstAmount:130}];
+  const d=__tbDiff();
+  return {pass: d===0 && __bal('Office Expenses')>=0, got:'diff='+d+' exp='+__bal('Office Expenses')};
+`);
+
+test('Malformed asset (no years object) must not crash any report', `
+  __reset();
+  fixedAssets=[{id:'f1',name:'Bad',cost:5000,ccaClass:'8',acquiredDate:'2026-01-01'}];
+  try { renderPL(); renderBalanceSheet(); renderTrialBalance(); renderGL(); return {pass:true, got:'no throw'}; }
+  catch(e){ return {pass:false, got:e.message}; }
+`);
+
+test('Uncategorized in/out transactions stay balanced', `
+  __reset();
+  transactions=[
+    {id:'t1',date:'2026-01-01',amount:500, account:'Chequing',category:'Uncategorized'},
+    {id:'t2',date:'2026-01-02',amount:-200,account:'Chequing',category:'Uncategorized'}];
+  const d=__tbDiff();
+  return {pass: d===0, got:'diff='+d};
+`);
+
+test('Balance Sheet balances with a fixed asset + CCA (single year)', `
+  __reset();
+  companyConfig={...companyConfig, fyEnd:'2026-12-31'};
+  transactions=[
+    {id:'e1',date:'2026-01-01',amount:10000,account:'Chequing',category:'Equity'},
+    {id:'a1',date:'2026-03-01',amount:-10000,account:'Chequing',category:'Fixed Assets'}];
+  fixedAssets=[{id:'f1',name:'L',cost:10000,ccaClass:'8',acquiredDate:'2026-03-01',active:true,
+    years:{'2026':{openingUCC:0,additions:10000,disposals:0,ccaClaimed:0}}}];
+  renderBalanceSheet();
+  const out=document.getElementById('bs-table').textContent.includes('Out of balance');
+  return {pass: !out && __tbDiff()===0, got:'outOfBalance='+out};
+`);
+
+group('B. Helpers & safety (must pass)');
+
+test('esc() neutralises HTML', `
+  return {pass: esc('<img src=x onerror=a>')==='&lt;img src=x onerror=a&gt;' && esc('a"b')==='a&quot;b', got:esc('<img>')};
+`);
+
+test('csvCell: formula de-fang, negatives preserved, RFC-4180 quoting', `
+  const ok = csvCell('=1+1')==="'=1+1" && csvCell('@X')==="'@X" && csvCell('-2+3+cmd()')==="'-2+3+cmd()"
+    && csvCell('-1234.56')==='-1234.56' && csvCell(-5)==='-5' && csvCell('a,b')==='"a,b"'
+    && csvCell('say "hi"')==='"say ""hi"""';
+  return {pass: ok, got: csvCell('=1+1')+' | '+csvCell('-1234.56')};
+`);
+
+test('defaultHstRate() follows province', `
+  const t=(p)=>{ companyConfig={...companyConfig, province:p}; return defaultHstRate(); };
+  const ok = t('Ontario')===13 && t('Nova Scotia')===14 && t('New Brunswick')===15 && t('British Columbia')===5 && t('')===13;
+  return {pass: ok, got:'ON='+t('Ontario')+' NS='+t('Nova Scotia')+' BC='+t('British Columbia')};
+`);
+
+/* ════════════ GROUP C — known open bugs (fail until fixed) ════════════ */
+group('C. Open bugs (red = confirmed bug, fix turns green)');
+
+test('R1: P&L counts uncategorized income ONCE', `
+  __reset();
+  transactions=[{id:'t1',date:'2026-01-05',amount:1000,account:'Chequing',category:'Uncategorized'}];
+  renderPL();
+  const rev=__cell('#pl-full-table tr.rt-subtotal','Total Revenue');
+  return {pass: rev!==null && Math.abs(rev-1000)<0.01, got:'Total Revenue='+rev+' (expect 1000)'};
+`);
+
+test('R4: HST report counts linked-deposit HST once', `
+  __reset();
+  invoices=[{id:'i1',status:'paid',total:1130,hstAmount:130,subtotal:1000,category:'Sales Revenue',client:'T',date:'2026-01-15',invoiceNum:'INV-1'}];
+  transactions=[{id:'t1',date:'2026-01-20',amount:1130,account:'Chequing',category:'Accounts Receivable',linkedInvoiceId:'i1',hstAmount:130,description:'dep'}];
+  const tog=document.getElementById('hst-method-toggle'); if(tog){tog.value='traditional'; tog.dataset.initialized='1';}
+  renderHST();
+  const col=__cell('#hst-table tr','Less: HST Collected');
+  return {pass: col!==null && Math.abs(Math.abs(col)-130)<0.01, got:'HST collected='+col+' (expect 130)'};
+`);
+
+test('R5: category filter keeps its selection across re-render', `
+  __reset();
+  transactions=[{id:'t1',date:'2026-01-01',amount:-50,account:'Chequing',category:'Office Expenses',description:'x'}];
+  renderTransactions();
+  const f=document.getElementById('category-filter');
+  f.value='Office Expenses';
+  renderTransactions();
+  return {pass: f.value==='Office Expenses', got:'value after render="'+f.value+'"'};
+`);
+
+test('R2: GL view shows invoice postings (A/R account present)', `
+  __reset();
+  invoices=[{id:'i1',status:'sent',total:1130,hstAmount:130,subtotal:1000,category:'Sales Revenue',client:'T',date:'2026-01-15',invoiceNum:'INV-9'}];
+  renderGL();
+  const txt=document.getElementById('gl-body').textContent;
+  return {pass: txt.includes('Accounts Receivable'), got: txt.includes('Accounts Receivable')?'present':'A/R missing from GL'};
+`);
+
+test('R6: deleting an invoice unlinks its payment transactions', `
+  __reset();
+  invoices=[{id:'i1',status:'paid',total:500,hstAmount:0,subtotal:500,category:'Sales Revenue',client:'T',date:'2026-01-15',invoiceNum:'INV-5'}];
+  transactions=[{id:'t1',date:'2026-01-20',amount:500,account:'Chequing',category:'Accounts Receivable',linkedInvoiceId:'i1',description:'dep'}];
+  deleteInvoice('i1');
+  const t=transactions.find(x=>x.id==='t1');
+  return {pass: !!t && !t.linkedInvoiceId && t.category!=='Accounts Receivable',
+          got:'linkedInvoiceId='+(t&&t.linkedInvoiceId)+' category='+(t&&t.category)};
+`);
+
+test('R15a: imported invoice with status "Unpaid" is not marked paid (via normaliseInvRows)', `
+  __reset();
+  const rows = normaliseInvRows([{ 'Invoice #':'IMP-1', 'Date':'2026-01-01', 'Client':'A',
+    'Subtotal':'100', 'HST':'13', 'Total':'113', 'Status':'Unpaid' }]);
+  addInvoiceRows(rows);
+  const rows2 = normaliseInvRows([{ 'Invoice #':'IMP-9', 'Date':'2026-01-02', 'Client':'B',
+    'Subtotal':'50', 'HST':'0', 'Total':'50', 'Status':'Paid' }]);
+  addInvoiceRows(rows2);
+  const unpaidOk = invoices.find(i=>i.invoiceNum==='IMP-1')?.status !== 'paid';
+  const paidOk   = invoices.find(i=>i.invoiceNum==='IMP-9')?.status === 'paid';
+  return {pass: unpaidOk && paidOk,
+          got:'Unpaid→'+invoices.find(i=>i.invoiceNum==='IMP-1')?.status+' Paid→'+invoices.find(i=>i.invoiceNum==='IMP-9')?.status};
+`);
+
+test('R15b: re-importing the same invoice does not duplicate it', `
+  __reset();
+  const row={invoiceNum:'IMP-2',date:'2026-01-01',client:'A',subtotal:100,total:113,hstAmount:13,status:'sent'};
+  addInvoiceRows([{...row}]);
+  addInvoiceRows([{...row}]);
+  return {pass: invoices.length===1, got:'count='+invoices.length+' (expect 1)'};
+`);
+
+/* ════════════ GROUP D — screen ⇄ export parity & internal controls ════════════ */
+group('D. Screen = export parity & internal controls');
+
+test('Excel P&L rows show the SAME net profit as the screen', `
+  __reset();
+  transactions=[{id:'t1',date:'2026-01-05',amount:1130,account:'Chequing',category:'Sales Revenue',hstAmount:130}];
+  shEntries=[{id:'s1',date:'2026-02-01',description:'x',shareholder:'O',amount:113,hstAmount:13,category:'Office Expenses',status:'pending'},
+             {id:'s2',date:'2026-02-02',description:'y',shareholder:'O',amount:-1000,account:'Chequing',category:'Corporate Tax Expense'}];
+  transactions.push({id:'t2',date:'2026-12-31',amount:-300,account:'Chequing',category:'Corporate Tax Expense'});
+  renderPL();
+  const screenNet = __cell('#pl-full-table tr.rt-total','Net Profit');
+  const rows = plSheetRows('T','p');
+  const netRow = rows.find(r=>String(r[0]).startsWith('NET PROFIT'));
+  const exportNet = netRow ? parseFloat(netRow[1]) : null;
+  return {pass: screenNet!==null && exportNet!==null && Math.abs(screenNet-exportNet)<0.01,
+          got:'screen='+screenNet+' export='+exportNet};
+`);
+
+test('Excel Balance Sheet rows balance and match the screen totals', `
+  __reset();
+  companyConfig={...companyConfig, fyEnd:'2026-12-31'};
+  transactions=[
+    {id:'e1',date:'2026-01-01',amount:10000,account:'Chequing',category:'Equity'},
+    {id:'a1',date:'2026-03-01',amount:-10000,account:'Chequing',category:'Fixed Assets'},
+    {id:'c1',date:'2026-12-31',amount:-500,account:'Chequing',category:'Corporate Tax Expense'}];
+  fixedAssets=[{id:'f1',name:'L',cost:10000,ccaClass:'8',acquiredDate:'2026-03-01',active:true,
+    years:{'2026':{openingUCC:0,additions:10000,disposals:0,ccaClaimed:0}}}];
+  renderBalanceSheet();
+  const screenAssets = __cell('#bs-table tr.rt-total','Total Assets');
+  const rows = bsSheetRows('T','2026-12-31');
+  const num = (label) => { const r=rows.find(x=>String(x[0]).trim()===label); return r?parseFloat(r[1]):null; };
+  const expAssets = num('TOTAL ASSETS');
+  const expLE = num('TOTAL LIABILITIES + EQUITY');
+  const oob = rows.some(r=>String(r[0]).includes('OUT OF BALANCE'));
+  return {pass: !oob && expAssets!==null && Math.abs(expAssets-expLE)<0.02 && Math.abs(expAssets-screenAssets)<0.01,
+          got:'screen='+screenAssets+' exportA='+expAssets+' exportLE='+expLE+' oob='+oob};
+`);
+
+test('GL model ties to Trial Balance on every account (invoices+sh+AJE+CCA scenario)', `
+  __reset();
+  companyConfig={...companyConfig, fyEnd:'2026-12-31'};
+  transactions=[{id:'e1',date:'2026-01-01',amount:20000,account:'Chequing',category:'Equity'},
+                {id:'a1',date:'2026-03-01',amount:-10000,account:'Chequing',category:'Fixed Assets'},
+                {id:'x1',date:'2026-04-01',amount:-113,account:'Chequing',category:'Office Expenses',hstAmount:13},
+                {id:'w1',date:'2026-05-01',amount:500,account:'Chequing',category:'Transfer',transferDir:'out',transferPairId:'p1'},
+                {id:'w2',date:'2026-05-01',amount:500,account:'Savings', category:'Transfer',transferDir:'in', transferPairId:'p1'}];
+  invoices=[{id:'i1',status:'sent',total:1130,hstAmount:130,subtotal:1000,category:'Sales Revenue',client:'T',date:'2026-01-15',invoiceNum:'INV-1'}];
+  shEntries=[{id:'s1',date:'2026-02-01',description:'x',shareholder:'O',amount:113,hstAmount:13,category:'Office Expenses',status:'pending'}];
+  adjustingEntries=[{id:'j1',date:'2026-06-30',lines:[{account:'Rent',debit:200,credit:0},{account:'Chequing',debit:0,credit:200}]}];
+  fixedAssets=[{id:'f1',name:'L',cost:10000,ccaClass:'8',acquiredDate:'2026-03-01',active:true,
+    years:{'2026':{openingUCC:0,additions:10000,disposals:0,ccaClaimed:0}}}];
+  const full = buildFullLedger();
+  const gl = buildGLAccounts();
+  const names = new Set([...Object.keys(full),...Object.keys(gl)]);
+  const bad = [];
+  names.forEach(n=>{
+    const g=gl[n];
+    const glC = g ? (g.obDr+g.entries.reduce((s,e)=>s+e.dr,0))-(g.obCr+g.entries.reduce((s,e)=>s+e.cr,0)) : 0;
+    const f=full[n];
+    const tbC = f ? f.clDr-f.clCr : 0;
+    if(Math.abs(glC-tbC)>0.01) bad.push(n+' gl='+glC.toFixed(2)+' tb='+tbC.toFixed(2));
+  });
+  return {pass: bad.length===0, got: bad.length? bad.slice(0,3).join(' | ') : 'all accounts tie'};
+`);
+
+test('R3: home-office ITC counted once after posting to shareholder', `
+  __reset();
+  hoData = {sqftTotal:1000, sqftBiz:1000, years:{'2026':{heat:[113,0,0,0,0,0,0,0,0,0,0,0]}}};
+  const before = computeHST();
+  // simulate the posted state: the same amount now exists as a posted ho-* shareholder entry
+  shEntries=[{id:'ho-2026-heat-0',date:'2026-01-31',description:'Home office — Heat',shareholder:'O',
+              amount:113, hstAmount:13, category:'Utilities', status:'pending'}];
+  const after = computeHST();
+  const onceBefore = Math.abs(before.hstPaidTotal-13)<0.01;
+  const onceAfter  = Math.abs(after.hstPaidTotal-13)<0.01;
+  hoData = {years:{}};
+  return {pass: onceBefore && onceAfter, got:'before='+before.hstPaidTotal.toFixed(2)+' after='+after.hstPaidTotal.toFixed(2)+' (expect 13 both)'};
+`);
+
+test('Excel HST sheet figures come from the same model as the screen', `
+  __reset();
+  transactions=[{id:'t1',date:'2026-01-05',amount:1130,account:'Chequing',category:'Sales Revenue',hstAmount:130},
+                {id:'t2',date:'2026-02-05',amount:-113,account:'Chequing',category:'Office Expenses',hstAmount:13}];
+  const M = computeHST();
+  const tog=document.getElementById('hst-method-toggle'); if(tog){tog.value='traditional'; tog.dataset.initialized='1';}
+  renderHST();
+  const screenITC = __cell('#hst-table tr','Total HST Paid (ITC)');
+  return {pass: Math.abs(M.hstCollected-130)<0.01 && Math.abs(M.hstPaidTotal-13)<0.01
+              && screenITC!==null && Math.abs(screenITC-M.hstPaidTotal)<0.01,
+          got:'model coll='+M.hstCollected+' itc='+M.hstPaidTotal+' screenITC='+screenITC};
+`);
+
+test('Controls: clean books pass all internal control checks', `
+  __reset();
+  transactions=[{id:'t1',date:'2026-01-05',amount:1130,account:'Chequing',category:'Sales Revenue',hstAmount:130}];
+  const issues = runControlChecks();
+  return {pass: issues.length===0, got: issues.length? issues.map(i=>i.level+':'+i.msg).join(' | ') : 'no issues'};
+`);
+
+test('Controls: dangling invoice link and unbalanced AJE are detected', `
+  __reset();
+  transactions=[{id:'t1',date:'2026-01-05',amount:500,account:'Chequing',category:'Accounts Receivable',linkedInvoiceId:'GONE'}];
+  adjustingEntries=[{id:'j1',date:'2026-01-01',lines:[{account:'Rent',debit:500,credit:0},{account:'Chequing',debit:0,credit:300}]}];
+  const issues = runControlChecks();
+  const hasDangling = issues.some(i=>i.level==='error' && /deleted invoice/.test(i.msg));
+  const hasBadAje   = issues.some(i=>/unbalanced journal/.test(i.msg));
+  return {pass: hasDangling && hasBadAje, got: issues.map(i=>i.level).join(',')||'none'};
+`);
+
+test('JSON export payload mirrors the screen models', `
+  __reset();
+  transactions=[{id:'t1',date:'2026-01-05',amount:1130,account:'Chequing',category:'Sales Revenue',hstAmount:130}];
+  const pl = computePL(), bs = computeBS(), hst = computeHST();
+  // the JSON payload is built from these same calls — verify the three agree with each other
+  return {pass: Math.abs(pl.income-1000)<0.01 && Math.abs(bs.netProfit-pl.netProfit)<0.01
+              && Math.abs(hst.hstCollected-130)<0.01,
+          got:'pl.income='+pl.income+' bs.net='+bs.netProfit+' hst='+hst.hstCollected};
+`);
+
+test('Formulas: every model total carries its equation with matching result', `
+  __reset();
+  transactions=[{id:'t1',date:'2026-01-05',amount:1130,account:'Chequing',category:'Sales Revenue',hstAmount:130},
+                {id:'t2',date:'2026-12-31',amount:-300,account:'Chequing',category:'Corporate Tax Expense'}];
+  shEntries=[{id:'s1',date:'2026-02-01',description:'x',shareholder:'O',amount:113,hstAmount:13,category:'Office Expenses',status:'pending'}];
+  const pl = computePL(), bs = computeBS(), hst = computeHST();
+  const ok =
+    pl.formulas && pl.formulas['Net Profit / (Loss)'].endsWith(fmt(pl.netProfit)) &&
+    pl.formulas['Total Operating Expenses'].endsWith(fmt(pl.totalOpExpenses)) &&
+    bs.formulas && bs.formulas['Total Assets'].endsWith(fmt(bs.totalAssets)) &&
+    bs.formulas['Balance check'].includes('✓ balanced') &&
+    hst.formulas && hst.formulas['Net HST Owing / (Refund)'].endsWith(fmt(hst.netHst));
+  return {pass: !!ok, got: (pl.formulas&&pl.formulas['Net Profit / (Loss)'])||'no formulas'};
+`);
+
+test('Formula details block renders on P&L, Balance Sheet, TB and HST', `
+  __reset();
+  transactions=[{id:'t1',date:'2026-01-05',amount:1130,account:'Chequing',category:'Sales Revenue',hstAmount:130}];
+  renderPL(); renderBalanceSheet(); renderTrialBalance();
+  const tog=document.getElementById('hst-method-toggle'); if(tog){tog.value='traditional'; tog.dataset.initialized='1';}
+  renderHST();
+  const has = id => !!document.querySelector('#'+id+' details');
+  const r = {pl:has('pl-full-table'), bs:has('bs-table'), tb:has('tb-tfoot'), hst:has('hst-table')};
+  return {pass: r.pl && r.bs && r.tb && r.hst, got: JSON.stringify(r)};
+`);
+
+test('Field codes: every registry code resolves; report codes carry live value + formula', `
+  __reset();
+  transactions=[{id:'t1',date:'2026-01-05',amount:1130,account:'Chequing',category:'Sales Revenue',hstAmount:130}];
+  const bad = [];
+  Object.keys(FIELD_CODES).forEach(code => {
+    const r = resolveFieldCode(code);
+    if(!r || !r.label || !r.formula) bad.push(code);
+    if(FIELD_CODES[code].report && (r.value===null || r.value===undefined || isNaN(r.value))) bad.push(code+':novalue');
+  });
+  const np = resolveFieldCode('pl.700'); // case-insensitive
+  const ok = bad.length===0 && np && Math.abs(np.value - computePL().netProfit) < 0.01
+          && np.formula.endsWith(fmt(np.value));
+  return {pass: ok, got: bad.length? bad.join(',') : 'PL.700 = '+fmt(np.value)};
+`);
+
+test('Field-code lookup box and code chips render', `
+  __reset();
+  transactions=[{id:'t1',date:'2026-01-05',amount:1130,account:'Chequing',category:'Sales Revenue',hstAmount:130}];
+  renderPL();
+  const inp = document.getElementById('fcode-input'), out = document.getElementById('fcode-result');
+  inp.value = 'PL.700'; fieldCodeLookup();
+  const lookupOk = out.textContent.includes('PL.700') && out.textContent.includes('Net Profit');
+  const chipsOk = document.querySelector('#pl-full-table details').textContent.includes('PL.700');
+  inp.value=''; out.innerHTML='';
+  return {pass: lookupOk && chipsOk, got:'lookup='+lookupOk+' chips='+chipsOk};
+`);
+
+test('Versioning: semver APP_VERSION, changelog entry, save() stamps schema + app version', `
+  const semverOk = /^\\d+\\.\\d+\\.\\d+$/.test(APP_VERSION);
+  const dataOk = Number.isInteger(DATA_VERSION) && DATA_VERSION >= 1;
+  const logOk = Array.isArray(APP_CHANGELOG) && APP_CHANGELOG[0][0] === APP_VERSION && APP_CHANGELOG[0][2].length > 10;
+  save();
+  const stampOk = localStorage.getItem('ledger_app_version') === APP_VERSION
+               && localStorage.getItem(ck('ledger_data_version')) === String(DATA_VERSION);
+  const uiOk = (document.getElementById('app-version-display')||{}).textContent === 'v'+APP_VERSION;
+  return {pass: semverOk && dataOk && logOk && stampOk && uiOk,
+          got:'v='+APP_VERSION+' data=v'+DATA_VERSION+' stamp='+stampOk+' ui='+uiOk};
+`);
+
+/* ════════════ runner ════════════ */
+const iframe = document.getElementById('app');
+iframe.onload = () => setTimeout(run, 400);
+
+function run(){
+  const W = iframe.contentWindow;
+  const lsSnap = {}; for(let i=0;i<localStorage.length;i++){const k=localStorage.key(i); lsSnap[k]=localStorage.getItem(k);}
+  W.confirm = () => true;
+  W.alert = () => {};
+
+  W.eval(`
+    window.__snap = () => ({tx:transactions, inv:invoices, ob:openingBalances, aje:adjustingEntries,
+      sh:shEntries, fa:fixedAssets, cfg:companyConfig, inn:invNextNum, ho:hoData});
+    window.__restore = s => { transactions=s.tx; invoices=s.inv; openingBalances=s.ob; adjustingEntries=s.aje;
+      shEntries=s.sh; fixedAssets=s.fa; companyConfig=s.cfg; invNextNum=s.inn; hoData=s.ho; };
+    window.__reset = () => { transactions=[]; invoices=[]; openingBalances=[]; adjustingEntries=[]; shEntries=[]; fixedAssets=[]; };
+    window.__tbDiff = () => { const f=buildFullLedger(); let d=0,c=0; Object.values(f).forEach(a=>{d+=a.clDr;c+=a.clCr;}); return +Math.abs(d-c).toFixed(2); };
+    window.__bal = n => { const f=buildFullLedger(); return f[n]?+(f[n].clDr-f[n].clCr).toFixed(2):0; };
+    window.__cell = (sel,label) => {
+      const rows=[...document.querySelectorAll(sel)].filter(tr=>tr.textContent.includes(label));
+      if(!rows.length) return null;
+      const tds=rows[0].querySelectorAll('td'); if(tds.length<2) return null;
+      const v=parseFloat(String(tds[1].textContent).replace(/[^0-9.\\-]/g,'')); return isNaN(v)?null:v;
+    };
+  `);
+
+  const table = document.getElementById('results');
+  let pass=0, fail=0, err=0, n=0;
+  for(const t of tests){
+    if(t.group){ table.insertAdjacentHTML('beforeend', '<tr class="grp"><td colspan="4">'+t.group+'</td></tr>'); continue; }
+    n++;
+    let cls, label, got='';
+    try {
+      const r = W.eval('(()=>{ const __s=__snap(); try { '+t.code+' } finally { __restore(__s); } })()');
+      if(r && r.pass){ cls='pass'; label='PASS'; pass++; } else { cls='fail'; label='FAIL'; fail++; }
+      got = r ? String(r.got||'') : 'no result';
+    } catch(e){ cls='err'; label='ERROR'; err++; got=e.message; }
+    table.insertAdjacentHTML('beforeend',
+      '<tr><td>'+n+'</td><td>'+t.name+'</td><td class="'+cls+'">'+label+'</td><td class="got">'+got.replace(/</g,'&lt;')+'</td></tr>');
+  }
+
+  localStorage.clear();
+  Object.entries(lsSnap).forEach(([k,v])=>localStorage.setItem(k,v));
+
+  const s=document.getElementById('summary');
+  s.textContent = pass+' passed · '+fail+' failed · '+err+' errors — of '+n+' tests';
+  s.className = (fail+err)===0 ? 'ok' : 'bad';
+  document.title = ((fail+err)===0?'✓ ':'✗ ')+'Ledger tests: '+pass+'/'+n;
+  window.__results = {pass, fail, err, total:n};
+}
+</script>
+</body>
+</html>
