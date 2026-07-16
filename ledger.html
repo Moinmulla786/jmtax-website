@@ -33,51 +33,61 @@
 <meta name="viewport" content="width=1280, initial-scale=0.25, minimum-scale=0.1, user-scalable=yes">
 <title>Ledger — Bookkeeping</title>
 <link rel="icon" type="image/png" href="img/ledger-icon.png">
-<link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Fraunces:ital,wght@0,300;0,500;0,700;1,300&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Fraunces:ital,opsz,wght@0,9..144,300;0,9..144,500;0,9..144,600;0,9..144,700;1,9..144,300&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 <style>
   *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
   :root {
-    --bg: #f5f3ee;
+    /* J & M Tax brand palette — mirrors styles.css on the main website */
+    --navy: #0d2745;
+    --navy-deep: #081a30;
+    --teal: #1f8a8a;
+    --teal-bright: #2fb6b0;
+    --gold: #d8a23a;
+    --gold-soft: #f0d9a8;
+
+    --bg: #f4f7f9;              /* website --mist */
     --surface: #ffffff;
-    --surface2: #f0ede6;
-    --border: #ddd9d0;
-    --border2: #ccc8be;
-    --text: #1a1917;
-    --text2: #5a564f;
-    --text3: #807c74;
-    --accent: #2a5c45;
-    --accent-light: #d4ead9;
-    --accent-text: #1a3d2d;
+    --surface2: #eef3f6;
+    --border: #e2e8ee;          /* website --line */
+    --border2: #cfd9e2;
+    --text: #16202c;            /* website --ink */
+    --text2: #5a6b7b;           /* website --slate */
+    --text3: #8595a5;
+    --accent: #1f8a8a;          /* teal — primary action, matches .btn-teal */
+    --accent-light: #ddf0ef;
+    --accent-text: #135e5e;
     --danger: #c0392b;
     --danger-light: #fdecea;
-    --warning: #9a6700;
-    --warning-light: #fef3d0;
-    --info: #1a4a7a;
-    --info-light: #ddeeff;
-    --mono: 'DM Mono', monospace;
-    --display: 'Fraunces', serif;
+    --warning: #8a6410;
+    --warning-light: #faf1dc;   /* gold-soft tint */
+    --info: #0d2745;            /* navy */
+    --info-light: #e4ecf5;
+    --sans: 'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif;
+    --mono: 'DM Mono', monospace;   /* amounts stay monospace — columns align */
+    --display: 'Fraunces', Georgia, serif;
     --radius: 8px;
     --radius-lg: 14px;
-    --shadow: 0 1px 3px rgba(0,0,0,0.08), 0 1px 2px rgba(0,0,0,0.04);
-    --shadow-lg: 0 4px 16px rgba(0,0,0,0.10);
+    --shadow: 0 2px 10px rgba(13,39,69,.06);
+    --shadow-lg: 0 14px 40px rgba(13,39,69,.10);
   }
 
   body {
-    font-family: var(--mono);
+    font-family: var(--sans);
     background: var(--bg);
     color: var(--text);
     min-height: 100vh;
     font-size: 13px;
     line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
   }
 
   /* Layout */
   .shell { display: flex; min-height: 100vh; }
   .sidebar {
     width: 220px; flex-shrink: 0;
-    background: var(--surface);
-    border-right: 1px solid var(--border);
+    background: linear-gradient(180deg, var(--navy) 0%, var(--navy-deep) 100%);
+    border-right: 1px solid var(--navy-deep);
     display: flex; flex-direction: column;
     position: sticky; top: 0; height: 100vh; overflow-y: auto;
   }
@@ -86,22 +96,33 @@
 
   /* Sidebar */
   .brand {
-    padding: 28px 24px 20px;
-    border-bottom: 1px solid var(--border);
+    padding: 24px 20px 18px;
+    border-bottom: 1px solid rgba(255,255,255,0.10);
+    display: flex; align-items: center; gap: 11px;
+  }
+  .brand-mark {
+    width: 40px; height: 40px; flex-shrink: 0;
+    display: flex; align-items: center; justify-content: center;
+    background: var(--gold);
+    color: var(--navy-deep);
+    font-family: var(--display);
+    font-weight: 700; font-size: 17px;
+    border-radius: 10px;
+    letter-spacing: -0.5px;
   }
   .brand-name {
     font-family: var(--display);
-    font-size: 22px;
-    font-weight: 700;
-    color: var(--accent);
-    letter-spacing: -0.5px;
-    line-height: 1;
+    font-size: 17px;
+    font-weight: 600;
+    color: #ffffff;
+    letter-spacing: -0.3px;
+    line-height: 1.1;
   }
   .brand-sub {
-    font-size: 11px;
-    color: var(--text3);
-    margin-top: 3px;
-    letter-spacing: 0.05em;
+    font-size: 10px;
+    color: var(--gold-soft);
+    margin-top: 2px;
+    letter-spacing: 0.08em;
     text-transform: uppercase;
   }
   .nav { padding: 16px 12px; flex: 1; }
@@ -117,24 +138,28 @@
     border: none; background: none; width: 100%; text-align: left;
     letter-spacing: 0.01em;
   }
-  .nav-item:hover { background: var(--surface2); color: var(--text); }
-  .nav-item.active { background: var(--accent-light); color: var(--accent-text); }
+  .sidebar .nav-item { color: rgba(255,255,255,0.72); font-family: var(--sans); }
+  .sidebar .nav-item:hover { background: rgba(255,255,255,0.08); color: #ffffff; }
+  .sidebar .nav-item.active { background: var(--teal); color: #ffffff; }
   .nav-icon { font-size: 15px; width: 18px; text-align: center; }
   .nav-section {
     font-size: 10px;
-    font-weight: 500;
-    color: var(--text3);
-    letter-spacing: 0.1em;
+    font-weight: 600;
+    color: rgba(240,217,168,0.75);   /* gold-soft */
+    letter-spacing: 0.12em;
     text-transform: uppercase;
     padding: 16px 12px 6px;
   }
   .sidebar-footer {
     padding: 16px;
-    border-top: 1px solid var(--border);
+    border-top: 1px solid rgba(255,255,255,0.10);
   }
+  .sidebar-footer, .sidebar-footer div { color: rgba(255,255,255,0.55); }
+  .sidebar-footer [style*="color:var(--text2)"] { color: rgba(255,255,255,0.85) !important; }
+  .sidebar-footer [style*="color:var(--text3)"] { color: rgba(255,255,255,0.55) !important; }
   .tx-count {
     font-size: 11px;
-    color: var(--text3);
+    color: rgba(255,255,255,0.55);
     text-align: center;
   }
 
@@ -150,9 +175,8 @@
   .page-title {
     font-family: var(--display);
     font-size: 20px;
-    font-weight: 500;
-    color: var(--text);
-    font-style: italic;
+    font-weight: 600;
+    color: var(--navy);
   }
   .topbar-actions { display: flex; gap: 8px; align-items: center; }
 
@@ -164,22 +188,22 @@
     border: 1px solid var(--border2);
     background: var(--surface);
     color: var(--text);
-    font-family: var(--mono);
+    font-family: var(--sans);
     font-size: 12px;
-    font-weight: 500;
+    font-weight: 600;
     cursor: pointer;
     transition: all 0.15s;
     white-space: nowrap;
   }
   .btn:hover { background: var(--surface2); border-color: var(--text3); }
   .btn-primary {
-    background: var(--accent);
+    background: var(--teal);
     color: #fff;
-    border-color: var(--accent);
+    border-color: var(--teal);
   }
-  .btn-primary:hover { background: #1e4433; border-color: #1e4433; }
+  .btn-primary:hover { background: #17706f; border-color: #17706f; }
   .btn-ai {
-    background: linear-gradient(135deg, #2a5c45, #1a4a7a);
+    background: linear-gradient(135deg, var(--teal), var(--navy));
     color: #fff; border: none;
   }
   .btn-ai:hover { opacity: 0.9; }
@@ -482,8 +506,11 @@
   <!-- Sidebar -->
   <aside class="sidebar">
     <div class="brand">
-      <div class="brand-name">Ledger</div>
-      <div class="brand-sub">Bookkeeping</div>
+      <span class="brand-mark">JM</span>
+      <div>
+        <div class="brand-name">J &amp; M Tax</div>
+        <div class="brand-sub">Ledger · Bookkeeping</div>
+      </div>
     </div>
     <div id="client-switcher" style="padding:0 14px 12px"></div>
     <nav class="nav">
@@ -1572,9 +1599,10 @@
 // Every export, backup, and save is stamped with both, so any file can be traced to
 // the exact software version that produced it.
 // ═══════════════════════════════════════════════════════════════
-const APP_VERSION  = '2.0.0';
+const APP_VERSION  = '2.1.0';
 const DATA_VERSION = 1;
 const APP_CHANGELOG = [
+  ['2.1.0', '2026-07-16', 'Brand restyle to match the J&M Tax website: navy sidebar with gold JM mark, teal actions, Inter body type with Fraunces headings, website palette throughout. Sidebar shows the active client name (firm brand as fallback). No accounting changes.'],
   ['2.0.0', '2026-07-14', 'Robustness release: regression test suite (35 tests); one shared computation per report so screen = Excel = JSON = PDF; internal control checks on every Reports view; ƒ calculation formulas on every total; TaxCycle-style field codes with lookup; fixed invoice/HST/GL/home-office double-counts, invoice deletion cleanup, import dedup and status parsing.'],
   ['1.x',   '2025–2026', 'Original release: transactions, imports (CSV/XLSX/PDF/paste), invoices & A/R, shareholder loan, home office, fixed assets/CCA, AJE, HST, GIFI, multi-client, backups.'],
 ];
@@ -8143,13 +8171,14 @@ function cfgUpdateFYLabel() {
 }
 
 function cfgUpdateBrand() {
+  // Shows the ACTIVE CLIENT's name in the sidebar; falls back to the firm brand.
   const name = companyConfig.corpName;
   const brandEl = document.querySelector('.brand-name');
   if(brandEl && name) brandEl.textContent = name;
-  else if(brandEl) brandEl.textContent = 'Ledger';
+  else if(brandEl) brandEl.textContent = 'J & M Tax';
   const subEl = document.querySelector('.brand-sub');
   if(subEl && companyConfig.taxYear) subEl.textContent = `Tax Year ${companyConfig.taxYear}`;
-  else if(subEl) subEl.textContent = 'Bookkeeping';
+  else if(subEl) subEl.textContent = 'Ledger · Bookkeeping';
 }
 
 // ——— Shareholders CRUD ———
