@@ -38,38 +38,41 @@
   *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
   :root {
-    /* J & M Tax brand palette — mirrors styles.css on the main website */
-    --navy: #0d2745;
-    --navy-deep: #081a30;
-    --teal: #1f8a8a;
-    --teal-bright: #2fb6b0;
-    --gold: #d8a23a;
-    --gold-soft: #f0d9a8;
+    /* Ledger's own premium palette — graphite chrome, indigo primary, emerald for money.
+       Deliberately distinct from the marketing site; --accent stays GREEN because it carries
+       money-in / balanced / success semantics across every report. */
+    --ink-1: #181c28;           /* sidebar top — deep graphite */
+    --ink-2: #10141f;           /* sidebar bottom */
+    --primary: #4f46e5;         /* indigo — buttons, nav, brand chrome */
+    --primary-deep: #4338ca;
+    --primary-light: #e9e9fd;
+    --primary-text: #3730a3;
+    --heading: #1e2433;         /* Fraunces titles */
 
-    --bg: #f4f7f9;              /* website --mist */
+    --bg: #f6f7fa;
     --surface: #ffffff;
-    --surface2: #eef3f6;
-    --border: #e2e8ee;          /* website --line */
-    --border2: #cfd9e2;
-    --text: #16202c;            /* website --ink */
-    --text2: #5a6b7b;           /* website --slate */
-    --text3: #8595a5;
-    --accent: #1f8a8a;          /* teal — primary action, matches .btn-teal */
-    --accent-light: #ddf0ef;
-    --accent-text: #135e5e;
-    --danger: #c0392b;
-    --danger-light: #fdecea;
-    --warning: #8a6410;
-    --warning-light: #faf1dc;   /* gold-soft tint */
-    --info: #0d2745;            /* navy */
-    --info-light: #e4ecf5;
+    --surface2: #eef0f4;
+    --border: #e4e7ec;
+    --border2: #cfd6df;
+    --text: #1a2130;
+    --text2: #5b6472;
+    --text3: #8b93a1;
+    --accent: #0e8345;          /* emerald — money in, balanced, success */
+    --accent-light: #d9f0e3;
+    --accent-text: #09522f;
+    --danger: #d92d20;
+    --danger-light: #fee4e2;
+    --warning: #b54708;
+    --warning-light: #fef0c7;
+    --info: #175cd3;
+    --info-light: #e0f0ff;
     --sans: 'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif;
     --mono: 'DM Mono', monospace;   /* amounts stay monospace — columns align */
     --display: 'Fraunces', Georgia, serif;
     --radius: 8px;
     --radius-lg: 14px;
-    --shadow: 0 2px 10px rgba(13,39,69,.06);
-    --shadow-lg: 0 14px 40px rgba(13,39,69,.10);
+    --shadow: 0 2px 10px rgba(16,20,31,.06);
+    --shadow-lg: 0 14px 40px rgba(16,20,31,.12);
   }
 
   body {
@@ -86,8 +89,8 @@
   .shell { display: flex; min-height: 100vh; }
   .sidebar {
     width: 220px; flex-shrink: 0;
-    background: linear-gradient(180deg, var(--navy) 0%, var(--navy-deep) 100%);
-    border-right: 1px solid var(--navy-deep);
+    background: linear-gradient(180deg, var(--ink-1) 0%, var(--ink-2) 100%);
+    border-right: 1px solid var(--ink-2);
     display: flex; flex-direction: column;
     position: sticky; top: 0; height: 100vh; overflow-y: auto;
   }
@@ -103,12 +106,13 @@
   .brand-mark {
     width: 40px; height: 40px; flex-shrink: 0;
     display: flex; align-items: center; justify-content: center;
-    background: var(--gold);
-    color: var(--navy-deep);
+    background: linear-gradient(135deg, #6366f1, var(--primary-deep));
+    color: #ffffff;
     font-family: var(--display);
     font-weight: 700; font-size: 17px;
     border-radius: 10px;
     letter-spacing: -0.5px;
+    box-shadow: 0 2px 8px rgba(79,70,229,.35);
   }
   .brand-name {
     font-family: var(--display);
@@ -120,7 +124,7 @@
   }
   .brand-sub {
     font-size: 10px;
-    color: var(--gold-soft);
+    color: rgba(199,210,254,0.75);   /* indigo-soft */
     margin-top: 2px;
     letter-spacing: 0.08em;
     text-transform: uppercase;
@@ -140,12 +144,12 @@
   }
   .sidebar .nav-item { color: rgba(255,255,255,0.72); font-family: var(--sans); }
   .sidebar .nav-item:hover { background: rgba(255,255,255,0.08); color: #ffffff; }
-  .sidebar .nav-item.active { background: var(--teal); color: #ffffff; }
+  .sidebar .nav-item.active { background: var(--primary); color: #ffffff; box-shadow: 0 2px 8px rgba(79,70,229,.30); }
   .nav-icon { font-size: 15px; width: 18px; text-align: center; }
   .nav-section {
     font-size: 10px;
     font-weight: 600;
-    color: rgba(240,217,168,0.75);   /* gold-soft */
+    color: rgba(165,180,252,0.55);   /* indigo-soft */
     letter-spacing: 0.12em;
     text-transform: uppercase;
     padding: 16px 12px 6px;
@@ -176,7 +180,7 @@
     font-family: var(--display);
     font-size: 20px;
     font-weight: 600;
-    color: var(--navy);
+    color: var(--heading);
   }
   .topbar-actions { display: flex; gap: 8px; align-items: center; }
 
@@ -197,13 +201,13 @@
   }
   .btn:hover { background: var(--surface2); border-color: var(--text3); }
   .btn-primary {
-    background: var(--teal);
+    background: var(--primary);
     color: #fff;
-    border-color: var(--teal);
+    border-color: var(--primary);
   }
-  .btn-primary:hover { background: #17706f; border-color: #17706f; }
+  .btn-primary:hover { background: var(--primary-deep); border-color: var(--primary-deep); }
   .btn-ai {
-    background: linear-gradient(135deg, var(--teal), var(--navy));
+    background: linear-gradient(135deg, #6366f1, #312e81);
     color: #fff; border: none;
   }
   .btn-ai:hover { opacity: 0.9; }
@@ -1599,9 +1603,10 @@
 // Every export, backup, and save is stamped with both, so any file can be traced to
 // the exact software version that produced it.
 // ═══════════════════════════════════════════════════════════════
-const APP_VERSION  = '2.1.0';
+const APP_VERSION  = '2.2.0';
 const DATA_VERSION = 1;
 const APP_CHANGELOG = [
+  ['2.2.0', '2026-07-16', 'Premium visual identity: graphite sidebar, indigo primary actions and brand mark, cool-gray canvas. Emerald is reserved for money-in / balanced / success so amount colors keep their meaning. No accounting changes.'],
   ['2.1.0', '2026-07-16', 'Brand restyle to match the J&M Tax website: navy sidebar with gold JM mark, teal actions, Inter body type with Fraunces headings, website palette throughout. Sidebar shows the active client name (firm brand as fallback). No accounting changes.'],
   ['2.0.0', '2026-07-14', 'Robustness release: regression test suite (35 tests); one shared computation per report so screen = Excel = JSON = PDF; internal control checks on every Reports view; ƒ calculation formulas on every total; TaxCycle-style field codes with lookup; fixed invoice/HST/GL/home-office double-counts, invoice deletion cleanup, import dedup and status parsing.'],
   ['1.x',   '2025–2026', 'Original release: transactions, imports (CSV/XLSX/PDF/paste), invoices & A/R, shareholder loan, home office, fixed assets/CCA, AJE, HST, GIFI, multi-client, backups.'],
