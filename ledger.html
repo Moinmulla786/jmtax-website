@@ -38,25 +38,25 @@
   *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
   :root {
-    /* Ledger's own premium palette — graphite chrome, indigo primary, emerald for money.
-       Deliberately distinct from the marketing site; --accent stays GREEN because it carries
-       money-in / balanced / success semantics across every report. */
-    --ink-1: #181c28;           /* sidebar top — deep graphite */
-    --ink-2: #10141f;           /* sidebar bottom */
-    --primary: #4f46e5;         /* indigo — buttons, nav, brand chrome */
-    --primary-deep: #4338ca;
-    --primary-light: #e9e9fd;
-    --primary-text: #3730a3;
-    --heading: #1e2433;         /* Fraunces titles */
+    /* Light, TaxCycle-style palette — light-blue chrome, clear blue primary, emerald for money.
+       --accent stays GREEN because it carries money-in / balanced / success semantics
+       across every report. */
+    --ink-1: #e9f2fb;           /* sidebar top — light blue */
+    --ink-2: #dcebf8;           /* sidebar bottom */
+    --primary: #1273c4;         /* clear professional blue — buttons, nav, brand chrome */
+    --primary-deep: #0d5c9e;
+    --primary-light: #e1effb;
+    --primary-text: #0b4a80;
+    --heading: #143f6b;         /* Fraunces titles — deep blue */
 
-    --bg: #f6f7fa;
+    --bg: #f6fafd;
     --surface: #ffffff;
-    --surface2: #eef0f4;
-    --border: #e4e7ec;
-    --border2: #cfd6df;
-    --text: #1a2130;
-    --text2: #5b6472;
-    --text3: #8b93a1;
+    --surface2: #edf3f9;
+    --border: #dbe6f0;
+    --border2: #c3d4e4;
+    --text: #1d2b3a;
+    --text2: #52657a;
+    --text3: #7f92a5;
     --accent: #0e8345;          /* emerald — money in, balanced, success */
     --accent-light: #d9f0e3;
     --accent-text: #09522f;
@@ -90,7 +90,7 @@
   .sidebar {
     width: 220px; flex-shrink: 0;
     background: linear-gradient(180deg, var(--ink-1) 0%, var(--ink-2) 100%);
-    border-right: 1px solid var(--ink-2);
+    border-right: 1px solid var(--border2);
     display: flex; flex-direction: column;
     position: sticky; top: 0; height: 100vh; overflow-y: auto;
   }
@@ -100,31 +100,31 @@
   /* Sidebar */
   .brand {
     padding: 24px 20px 18px;
-    border-bottom: 1px solid rgba(255,255,255,0.10);
+    border-bottom: 1px solid var(--border2);
     display: flex; align-items: center; gap: 11px;
   }
   .brand-mark {
     width: 40px; height: 40px; flex-shrink: 0;
     display: flex; align-items: center; justify-content: center;
-    background: linear-gradient(135deg, #6366f1, var(--primary-deep));
+    background: linear-gradient(135deg, #2f8fdd, var(--primary-deep));
     color: #ffffff;
     font-family: var(--display);
     font-weight: 700; font-size: 17px;
     border-radius: 10px;
     letter-spacing: -0.5px;
-    box-shadow: 0 2px 8px rgba(79,70,229,.35);
+    box-shadow: 0 2px 8px rgba(18,115,196,.30);
   }
   .brand-name {
     font-family: var(--display);
     font-size: 17px;
     font-weight: 600;
-    color: #ffffff;
+    color: var(--heading);
     letter-spacing: -0.3px;
     line-height: 1.1;
   }
   .brand-sub {
     font-size: 10px;
-    color: rgba(199,210,254,0.75);   /* indigo-soft */
+    color: var(--primary);
     margin-top: 2px;
     letter-spacing: 0.08em;
     text-transform: uppercase;
@@ -142,28 +142,26 @@
     border: none; background: none; width: 100%; text-align: left;
     letter-spacing: 0.01em;
   }
-  .sidebar .nav-item { color: rgba(255,255,255,0.72); font-family: var(--sans); }
-  .sidebar .nav-item:hover { background: rgba(255,255,255,0.08); color: #ffffff; }
-  .sidebar .nav-item.active { background: var(--primary); color: #ffffff; box-shadow: 0 2px 8px rgba(79,70,229,.30); }
+  .sidebar .nav-item { color: var(--text2); font-family: var(--sans); }
+  .sidebar .nav-item:hover { background: rgba(18,115,196,0.08); color: var(--heading); }
+  .sidebar .nav-item.active { background: var(--primary); color: #ffffff; box-shadow: 0 2px 8px rgba(18,115,196,.28); }
   .nav-icon { font-size: 15px; width: 18px; text-align: center; }
   .nav-section {
     font-size: 10px;
     font-weight: 600;
-    color: rgba(165,180,252,0.55);   /* indigo-soft */
+    color: var(--primary);
+    opacity: 0.75;
     letter-spacing: 0.12em;
     text-transform: uppercase;
     padding: 16px 12px 6px;
   }
   .sidebar-footer {
     padding: 16px;
-    border-top: 1px solid rgba(255,255,255,0.10);
+    border-top: 1px solid var(--border2);
   }
-  .sidebar-footer, .sidebar-footer div { color: rgba(255,255,255,0.55); }
-  .sidebar-footer [style*="color:var(--text2)"] { color: rgba(255,255,255,0.85) !important; }
-  .sidebar-footer [style*="color:var(--text3)"] { color: rgba(255,255,255,0.55) !important; }
   .tx-count {
     font-size: 11px;
-    color: rgba(255,255,255,0.55);
+    color: var(--text3);
     text-align: center;
   }
 
@@ -207,7 +205,7 @@
   }
   .btn-primary:hover { background: var(--primary-deep); border-color: var(--primary-deep); }
   .btn-ai {
-    background: linear-gradient(135deg, #6366f1, #312e81);
+    background: linear-gradient(135deg, #2f8fdd, #0d5c9e);
     color: #fff; border: none;
   }
   .btn-ai:hover { opacity: 0.9; }
@@ -1603,9 +1601,10 @@
 // Every export, backup, and save is stamped with both, so any file can be traced to
 // the exact software version that produced it.
 // ═══════════════════════════════════════════════════════════════
-const APP_VERSION  = '2.2.0';
+const APP_VERSION  = '2.3.0';
 const DATA_VERSION = 1;
 const APP_CHANGELOG = [
+  ['2.3.0', '2026-07-16', 'Light theme (TaxCycle-style): light-blue sidebar, clear blue primary actions and brand mark, airy blue-tinted canvas. Emerald still reserved for money-in / balanced / success. No accounting changes.'],
   ['2.2.0', '2026-07-16', 'Premium visual identity: graphite sidebar, indigo primary actions and brand mark, cool-gray canvas. Emerald is reserved for money-in / balanced / success so amount colors keep their meaning. No accounting changes.'],
   ['2.1.0', '2026-07-16', 'Brand restyle to match the J&M Tax website: navy sidebar with gold JM mark, teal actions, Inter body type with Fraunces headings, website palette throughout. Sidebar shows the active client name (firm brand as fallback). No accounting changes.'],
   ['2.0.0', '2026-07-14', 'Robustness release: regression test suite (35 tests); one shared computation per report so screen = Excel = JSON = PDF; internal control checks on every Reports view; ƒ calculation formulas on every total; TaxCycle-style field codes with lookup; fixed invoice/HST/GL/home-office double-counts, invoice deletion cleanup, import dedup and status parsing.'],
