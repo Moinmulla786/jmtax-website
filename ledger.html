@@ -1601,9 +1601,10 @@
 // Every export, backup, and save is stamped with both, so any file can be traced to
 // the exact software version that produced it.
 // ═══════════════════════════════════════════════════════════════
-const APP_VERSION  = '2.3.0';
+const APP_VERSION  = '2.3.1';
 const DATA_VERSION = 1;
 const APP_CHANGELOG = [
+  ['2.3.1', '2026-07-16', 'Duplicate account names now rejected in the Custom Ledgers settings field too (was already blocked in COA add/rename; the COA merge was always defensive). No accounting changes.'],
   ['2.3.0', '2026-07-16', 'Light theme (TaxCycle-style): light-blue sidebar, clear blue primary actions and brand mark, airy blue-tinted canvas. Emerald still reserved for money-in / balanced / success. No accounting changes.'],
   ['2.2.0', '2026-07-16', 'Premium visual identity: graphite sidebar, indigo primary actions and brand mark, cool-gray canvas. Emerald is reserved for money-in / balanced / success so amount colors keep their meaning. No accounting changes.'],
   ['2.1.0', '2026-07-16', 'Brand restyle to match the J&M Tax website: navy sidebar with gold JM mark, teal actions, Inter body type with Fraunces headings, website palette throughout. Sidebar shows the active client name (firm brand as fallback). No accounting changes.'],
@@ -8302,6 +8303,18 @@ function cfgAddCustomLedger() {
 }
 
 function cfgUpdateCustomLedger(id, field, value) {
+  // No duplicate account names from ANY path: reject a name that matches an existing
+  // account (case-insensitive), except this ledger's own current name.
+  if(field === 'name') {
+    const nn = String(value||'').trim();
+    const self = (companyConfig.customLedgers||[]).find(l=>l.id===id);
+    const selfName = (self?.name||'').toLowerCase();
+    if(nn && getAllAccounts().some(a => a.name.toLowerCase()===nn.toLowerCase() && a.name.toLowerCase()!==selfName)) {
+      toast(`⚠ "${nn}" already exists — choose a different account name`);
+      cfgRenderCustomLedgers();   // reset the input to the stored value
+      return;
+    }
+  }
   companyConfig.customLedgers = (companyConfig.customLedgers||[]).map(l =>
     l.id===id ? {...l, [field]:value} : l);
   cfgSyncCategories();

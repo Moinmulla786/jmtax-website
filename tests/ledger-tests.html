@@ -426,6 +426,28 @@ test('Versioning: semver APP_VERSION, changelog entry, save() stamps schema + ap
           got:'v='+APP_VERSION+' data=v'+DATA_VERSION+' stamp='+stampOk+' ui='+uiOk};
 `);
 
+test('Duplicate account names are impossible: entry guard + defensive COA merge', `
+  const cfgSnap = JSON.parse(JSON.stringify(companyConfig));
+  try {
+    // (1) entry guard: renaming a custom ledger to an existing account name is rejected
+    companyConfig.customLedgers = [{id:'cl-t1', name:'My Custom Exp', type:'expense', group:'Operating Expenses'}];
+    refreshAccountSets();
+    cfgUpdateCustomLedger('cl-t1', 'name', 'Rent');           // clashes with built-in
+    const rejected = (companyConfig.customLedgers.find(l=>l.id==='cl-t1')||{}).name === 'My Custom Exp';
+    cfgUpdateCustomLedger('cl-t1', 'name', 'rent');           // case-insensitive clash
+    const rejectedCI = (companyConfig.customLedgers.find(l=>l.id==='cl-t1')||{}).name === 'My Custom Exp';
+    // (2) defensive merge: even a sneaked-in duplicate cannot become a second account or
+    // override the built-in's type
+    companyConfig.customLedgers = [{id:'cl-t2', name:'Rent', type:'revenue', group:'Revenue'}];
+    refreshAccountSets();
+    const eff = getEffectiveCOA();
+    const stillExpense = eff['Rent'] && eff['Rent'].type === 'expense';
+    const single = getAllAccounts().filter(a=>a.name.toLowerCase()==='rent').length === 1;
+    return {pass: rejected && rejectedCI && stillExpense && single,
+            got:'guard='+rejected+' ci='+rejectedCI+' typeKept='+stillExpense+' single='+single};
+  } finally { companyConfig = cfgSnap; refreshAccountSets(); }
+`);
+
 /* ════════════ runner ════════════ */
 const iframe = document.getElementById('app');
 iframe.onload = () => setTimeout(run, 400);
