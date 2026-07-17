@@ -856,7 +856,10 @@
           <span style="font-size:18px;flex-shrink:0">◔</span>
           <div>
             <strong>Record pay runs here — never as bank transactions.</strong><br>
-            Enter gross pay and the CPP / EI / tax you withheld (from CRA's PDOC calculator). Each pay run posts
+            Enter gross pay and the CPP / EI / tax you withheld — get the exact figures from
+            <a href="https://www.canada.ca/en/revenue-agency/services/e-services/digital-services-businesses/payroll-deductions-online-calculator.html"
+               target="_blank" rel="noopener" style="color:var(--primary);font-weight:600">CRA's Payroll Deductions Online Calculator (PDOC) ↗</a>
+            (always current rates, maintained by CRA). Each pay run posts
             wages expense and two liabilities: <em>Wages Payable</em> (net pay owed to the employee) and
             <em>Payroll Deductions Payable</em> (owed to CRA).<br>
             Then, when the money leaves the bank: categorize the net-pay withdrawal as
@@ -867,6 +870,8 @@
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;gap:8px;flex-wrap:wrap">
           <div id="pr-summary" style="display:flex;gap:18px;font-size:12px;color:var(--text2)"></div>
           <div style="display:flex;gap:8px">
+            <a class="btn" href="https://www.canada.ca/en/revenue-agency/services/e-services/digital-services-businesses/payroll-deductions-online-calculator.html"
+               target="_blank" rel="noopener" style="text-decoration:none">⌗ CRA PDOC Calculator ↗</a>
             <button class="btn" onclick="exportPayrollCsv()">⇩ Export CSV</button>
             <button class="btn btn-primary" onclick="addPayRun()">+ Add Pay Run</button>
           </div>
@@ -1645,9 +1650,10 @@
 // Every export, backup, and save is stamped with both, so any file can be traced to
 // the exact software version that produced it.
 // ═══════════════════════════════════════════════════════════════
-const APP_VERSION  = '2.4.0';
+const APP_VERSION  = '2.4.1';
 const DATA_VERSION = 1;
 const APP_CHANGELOG = [
+  ['2.4.1', '2026-07-17', 'Payroll: direct links to CRA\'s Payroll Deductions Online Calculator (PDOC) from the Payroll tab — calculate there with always-current CRA rates, record here.'],
   ['2.4.0', '2026-07-17', 'Payroll module (recording, not calculation): enter pay-run figures from CRA PDOC; posts DR wages (gross + employer CPP/EI) / CR Payroll Deductions Payable / CR Wages Payable. Bank withdrawals categorized to the two liability accounts clear them — wages can never be double-counted between payroll and the bank. Employer CPP ×1 and EI ×1.4 auto-filled; PR.* field codes; controls reconcile Wages Payable both ways; CSV export; included in backups and all reports.'],
   ['2.3.1', '2026-07-16', 'Duplicate account names now rejected in the Custom Ledgers settings field too (was already blocked in COA add/rename; the COA merge was always defensive). No accounting changes.'],
   ['2.3.0', '2026-07-16', 'Light theme (TaxCycle-style): light-blue sidebar, clear blue primary actions and brand mark, airy blue-tinted canvas. Emerald still reserved for money-in / balanced / success. No accounting changes.'],
