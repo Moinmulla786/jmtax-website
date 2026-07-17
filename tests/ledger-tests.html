@@ -500,6 +500,24 @@ test('CRA remittance categorized "Payroll Deductions Payable" clears the CRA lia
   return {pass: d===0 && __bal('Payroll Deductions Payable')===0, got:'diff='+d+' pdp='+__bal('Payroll Deductions Payable')};
 `);
 
+test('Home office posts to real COA expense accounts under the selected shareholder', `
+  __reset();
+  companyConfig={...companyConfig, fyStart:'2026-01-01', fyEnd:'2026-12-31',
+    shareholders:[{id:'s1',name:'Moin Mulla',title:'Director',ownership:100,sin:''}]};
+  hoData={sqftTotal:1000, sqftBiz:250, shareholder:'Moin Mulla',
+    years:{'2026':{heat:[400,0,0,0,0,0,0,0,0,0,0,0], rent:[2000,0,0,0,0,0,0,0,0,0,0,0],
+                   maintain:[100,0,0,0,0,0,0,0,0,0,0,0]}}};
+  document.getElementById('ho-total-sqft').value=1000;
+  document.getElementById('ho-biz-sqft').value=250;
+  hoPostToShareholder();
+  const eff=getEffectiveCOA();
+  const badCat = shEntries.filter(e=>!eff[e.category] || eff[e.category].type!=='expense').map(e=>e.category);
+  const allSh  = shEntries.length>0 && shEntries.every(e=>e.shareholder==='Moin Mulla');
+  const d=__tbDiff();
+  return {pass: shEntries.length===3 && badCat.length===0 && allSh && d===0,
+          got:'n='+shEntries.length+' badCats='+(badCat.join(',')||'none')+' sh='+allSh+' diff='+d};
+`);
+
 /* ════════════ runner ════════════ */
 const iframe = document.getElementById('app');
 iframe.onload = () => setTimeout(run, 400);

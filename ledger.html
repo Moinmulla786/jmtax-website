@@ -918,8 +918,13 @@
                   <input type="number" id="ho-biz-sqft" class="edit-input" value="0" min="0" step="1"
                     oninput="hoRecalc()" style="width:100%;font-size:13px;font-weight:500;background:var(--accent-light)">
                 </div>
-                <div style="padding:10px 14px;background:var(--surface2);font-size:12px;font-weight:500">% used for business</div>
-                <div style="padding:10px 14px;border-left:1px solid var(--border);font-size:14px;font-weight:500;color:var(--accent)" id="ho-pct-display">0%</div>
+                <div style="padding:10px 14px;background:var(--surface2);border-bottom:1px solid var(--border);font-size:12px;font-weight:500">% used for business</div>
+                <div style="padding:10px 14px;border-left:1px solid var(--border);border-bottom:1px solid var(--border);font-size:14px;font-weight:500;color:var(--accent)" id="ho-pct-display">0%</div>
+                <div style="padding:10px 14px;background:var(--surface2);font-size:12px;font-weight:500">Shareholder (whose home)</div>
+                <div style="padding:6px 10px;border-left:1px solid var(--border)">
+                  <select id="ho-shareholder" class="edit-input" style="width:100%;font-size:12px"
+                    onchange="hoData.shareholder=this.value; hoSaveData();"></select>
+                </div>
               </div>
             </div>
 
@@ -1650,9 +1655,10 @@
 // Every export, backup, and save is stamped with both, so any file can be traced to
 // the exact software version that produced it.
 // ═══════════════════════════════════════════════════════════════
-const APP_VERSION  = '2.4.5';
+const APP_VERSION  = '2.4.6';
 const DATA_VERSION = 1;
 const APP_CHANGELOG = [
+  ['2.4.6', '2026-07-17', 'Home Office: shareholder dropdown (synced with Company Settings) chooses whose home the expenses post under. Also fixed: posted entries now use real COA accounts (Rent, Utilities, Interest & Bank Charges, Repairs & Maintenance) — the old "Rent & Utilities" name was not in the chart of accounts and was mistyped as an asset on the Trial Balance.'],
   ['2.4.5', '2026-07-17', 'Shareholder dropdowns now sync with Company Settings: names defined in Settings → Shareholders appear in the expense editor (plus historical names on existing entries); new entries default to your first real shareholder instead of "Shareholder 1".'],
   ['2.4.4', '2026-07-17', 'Payroll: top toolbar now shows the right actions (Add Pay Run, PDOC link, Export). Previously it fell back to a generic "Add Entry" that created a bank transaction — misleading on the Payroll page.'],
   ['2.4.3', '2026-07-17', 'Payroll: employee selector is now a true dropdown with a "➕ Add new employee…" option — pick from everyone previously paid, or add a name on the spot.'],
@@ -7371,6 +7377,15 @@ function hoInit() {
   // Restore sqft
   document.getElementById('ho-total-sqft').value = hoData.sqftTotal||0;
   document.getElementById('ho-biz-sqft').value   = hoData.sqftBiz||0;
+
+  // Shareholder picker — synced with Company Settings (same source as the shareholder module)
+  const shSel = document.getElementById('ho-shareholder');
+  if(shSel) {
+    const names = getShareholderNames();
+    const cur = hoData.shareholder && names.includes(hoData.shareholder) ? hoData.shareholder : names[0];
+    shSel.innerHTML = names.map(n=>`<option value="${esc(n)}"${n===cur?' selected':''}>${esc(n)}</option>`).join('');
+    hoData.shareholder = cur;
+  }
   hoRecalc();
 }
 
@@ -7517,12 +7532,14 @@ function hoPostToShareholder() {
       shEntries.push({
         id,
         date: `${slotDate.year}-${String(slotDate.monthIdx+1).padStart(2,'0')}-01`,
-        shareholder: 'Shareholder 1',
+        shareholder: hoData.shareholder || getShareholderNames()[0],
         description: `Home Office — ${row.label} (${monthName} ${slotDate.year})`,
-        category: row.key==='mortgage' ? 'Rent & Utilities'
-                : row.key==='rent'     ? 'Rent & Utilities'
-                : row.key==='heat'||row.key==='electric'||row.key==='water' ? 'Rent & Utilities'
+        // Real COA accounts only — a name outside the COA gets mistyped as an asset on the TB
+        category: row.key==='rent'      ? 'Rent'
+                : row.key==='mortgage'  ? 'Interest & Bank Charges'
+                : row.key==='heat'||row.key==='electric'||row.key==='water' ? 'Utilities'
                 : row.key==='insurance' ? 'Insurance'
+                : row.key==='maintain'  ? 'Repairs & Maintenance'
                 : 'Office Expenses',
         amount: parseFloat(bizAmt.toFixed(2)),
         hstAmount: hst,
