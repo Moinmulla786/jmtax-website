@@ -1650,9 +1650,10 @@
 // Every export, backup, and save is stamped with both, so any file can be traced to
 // the exact software version that produced it.
 // ═══════════════════════════════════════════════════════════════
-const APP_VERSION  = '2.4.3';
+const APP_VERSION  = '2.4.4';
 const DATA_VERSION = 1;
 const APP_CHANGELOG = [
+  ['2.4.4', '2026-07-17', 'Payroll: top toolbar now shows the right actions (Add Pay Run, PDOC link, Export). Previously it fell back to a generic "Add Entry" that created a bank transaction — misleading on the Payroll page.'],
   ['2.4.3', '2026-07-17', 'Payroll: employee selector is now a true dropdown with a "➕ Add new employee…" option — pick from everyone previously paid, or add a name on the spot.'],
   ['2.4.2', '2026-07-17', 'Payroll: employee name is now a dropdown (type-ahead) of everyone previously paid — deduped and sorted; new names can still be typed for a first pay run.'],
   ['2.4.1', '2026-07-17', 'Payroll: direct links to CRA\'s Payroll Deductions Online Calculator (PDOC) from the Payroll tab — calculate there with always-current CRA rates, record here.'],
@@ -5911,6 +5912,12 @@ function showView(v) {
       <button class="btn" onclick="exportAssetsCsv()">↓ Export CSV</button>`;
   } else if(v==='settings') {
     ta.innerHTML = `<button class="btn btn-primary" onclick="cfgSave();cfgShowSaved()">✓ Save Settings</button>`;
+  } else if(v==='payroll') {
+    ta.innerHTML = `
+      <a class="btn" href="https://www.canada.ca/en/revenue-agency/services/e-services/digital-services-businesses/payroll-deductions-online-calculator.html"
+         target="_blank" rel="noopener" style="text-decoration:none">⌗ CRA PDOC ↗</a>
+      <button class="btn btn-primary" onclick="addPayRun()">+ Add Pay Run</button>
+      <button class="btn" onclick="exportPayrollCsv()">↓ Export CSV</button>`;
   } else if(v==='aje') {
     ta.innerHTML = `
       <button class="btn btn-primary" onclick="ajeAdd()">+ New Entry</button>
