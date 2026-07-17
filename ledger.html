@@ -530,6 +530,9 @@
       <button class="nav-item" onclick="showView('shareholder')">
         <span class="nav-icon">◑</span> Shareholder Expenses
       </button>
+      <button class="nav-item" onclick="showView('payroll')">
+        <span class="nav-icon">◔</span> Payroll
+      </button>
       <button class="nav-item" onclick="showView('homeoffice')">
         <span class="nav-icon">⌂</span> Home Office
       </button>
@@ -844,6 +847,47 @@
           <div style="padding:10px 16px;font-size:11px;color:var(--text3);border-top:1px solid var(--border);display:flex;justify-content:space-between" id="inv-footer">
             <span>0 invoices</span><span></span>
           </div>
+        </div>
+      </div>
+
+      <!-- PAYROLL -->
+      <div id="view-payroll" class="view">
+        <div style="background:var(--primary-light);border:1px solid var(--border2);border-radius:var(--radius-lg);padding:12px 18px;margin-bottom:16px;font-size:12px;color:var(--primary-text);display:flex;gap:12px;align-items:flex-start">
+          <span style="font-size:18px;flex-shrink:0">◔</span>
+          <div>
+            <strong>Record pay runs here — never as bank transactions.</strong><br>
+            Enter gross pay and the CPP / EI / tax you withheld (from CRA's PDOC calculator). Each pay run posts
+            wages expense and two liabilities: <em>Wages Payable</em> (net pay owed to the employee) and
+            <em>Payroll Deductions Payable</em> (owed to CRA).<br>
+            Then, when the money leaves the bank: categorize the net-pay withdrawal as
+            <strong>Wages Payable</strong> and the CRA remittance as <strong>Payroll Deductions Payable</strong> —
+            the liabilities clear and nothing is ever double-counted. The controls banner flags any mismatch.
+          </div>
+        </div>
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;gap:8px;flex-wrap:wrap">
+          <div id="pr-summary" style="display:flex;gap:18px;font-size:12px;color:var(--text2)"></div>
+          <div style="display:flex;gap:8px">
+            <button class="btn" onclick="exportPayrollCsv()">⇩ Export CSV</button>
+            <button class="btn btn-primary" onclick="addPayRun()">+ Add Pay Run</button>
+          </div>
+        </div>
+        <div class="card">
+          <table style="width:100%;border-collapse:collapse" id="pr-table">
+            <thead>
+              <tr>
+                <th style="text-align:left;font-size:10px;color:var(--text3);letter-spacing:.07em;text-transform:uppercase;padding:10px 8px;border-bottom:2px solid var(--border2)">Date</th>
+                <th style="text-align:left;font-size:10px;color:var(--text3);letter-spacing:.07em;text-transform:uppercase;padding:10px 8px;border-bottom:2px solid var(--border2)">Employee</th>
+                <th style="text-align:right;font-size:10px;color:var(--text3);letter-spacing:.07em;text-transform:uppercase;padding:10px 8px;border-bottom:2px solid var(--border2)">Gross</th>
+                <th style="text-align:right;font-size:10px;color:var(--text3);letter-spacing:.07em;text-transform:uppercase;padding:10px 8px;border-bottom:2px solid var(--border2)">CPP</th>
+                <th style="text-align:right;font-size:10px;color:var(--text3);letter-spacing:.07em;text-transform:uppercase;padding:10px 8px;border-bottom:2px solid var(--border2)">EI</th>
+                <th style="text-align:right;font-size:10px;color:var(--text3);letter-spacing:.07em;text-transform:uppercase;padding:10px 8px;border-bottom:2px solid var(--border2)">Tax</th>
+                <th style="text-align:right;font-size:10px;color:var(--text3);letter-spacing:.07em;text-transform:uppercase;padding:10px 8px;border-bottom:2px solid var(--border2)">Employer CPP+EI</th>
+                <th style="text-align:right;font-size:10px;color:var(--text3);letter-spacing:.07em;text-transform:uppercase;padding:10px 8px;border-bottom:2px solid var(--border2)">Net Pay</th>
+              </tr>
+            </thead>
+            <tbody id="pr-tbody"></tbody>
+            <tfoot id="pr-tfoot"></tfoot>
+          </table>
         </div>
       </div>
 
@@ -1601,9 +1645,10 @@
 // Every export, backup, and save is stamped with both, so any file can be traced to
 // the exact software version that produced it.
 // ═══════════════════════════════════════════════════════════════
-const APP_VERSION  = '2.3.1';
+const APP_VERSION  = '2.4.0';
 const DATA_VERSION = 1;
 const APP_CHANGELOG = [
+  ['2.4.0', '2026-07-17', 'Payroll module (recording, not calculation): enter pay-run figures from CRA PDOC; posts DR wages (gross + employer CPP/EI) / CR Payroll Deductions Payable / CR Wages Payable. Bank withdrawals categorized to the two liability accounts clear them — wages can never be double-counted between payroll and the bank. Employer CPP ×1 and EI ×1.4 auto-filled; PR.* field codes; controls reconcile Wages Payable both ways; CSV export; included in backups and all reports.'],
   ['2.3.1', '2026-07-16', 'Duplicate account names now rejected in the Custom Ledgers settings field too (was already blocked in COA add/rename; the COA merge was always defensive). No accounting changes.'],
   ['2.3.0', '2026-07-16', 'Light theme (TaxCycle-style): light-blue sidebar, clear blue primary actions and brand mark, airy blue-tinted canvas. Emerald still reserved for money-in / balanced / success. No accounting changes.'],
   ['2.2.0', '2026-07-16', 'Premium visual identity: graphite sidebar, indigo primary actions and brand mark, cool-gray canvas. Emerald is reserved for money-in / balanced / success so amount colors keep their meaning. No accounting changes.'],
@@ -1681,6 +1726,7 @@ const MASTER_COA = [
   {name:'GST/HST Payable',                    type:'liability',group:'Current Liabilities',  gifi:'2680'},
   {name:'Corporate Tax Payable',              type:'liability',group:'Current Liabilities',  gifi:'2680'},
   {name:'Payroll Deductions Payable',         type:'liability',group:'Current Liabilities',  gifi:'2700'},
+  {name:'Wages Payable',                      type:'liability',group:'Current Liabilities',  gifi:'2620'},
   {name:'Due to Shareholder',                 type:'liability',group:'Current Liabilities',  gifi:'2780'},
   // ── Equity ──
   {name:'Equity',                             type:'equity',   group:'Equity',  gifi:'3500'},
@@ -1923,7 +1969,7 @@ function ensureClientSetup() {
       try { const cfg = JSON.parse(localStorage.getItem('ledger_cfg')||'{}'); if(cfg.corpName) name = cfg.corpName; } catch{}
       // Migrate legacy keys → prefixed
       ['ledger_txs','ledger_ob','ledger_sh','ledger_inv','ledger_invnum','ledger_ho',
-       'ledger_assets','ledger_cfg','ledger_aje','ledger_last_backup','ledger_asset_prompted']
+       'ledger_assets','ledger_cfg','ledger_aje','ledger_payroll','ledger_last_backup','ledger_asset_prompted']
         .forEach(k => {
           const v = localStorage.getItem(k);
           if(v !== null) { localStorage.setItem(`${id}_${k}`, v); localStorage.removeItem(k); }
@@ -1949,6 +1995,7 @@ const save = () => {
     localStorage.setItem(ck('ledger_txs'), JSON.stringify(transactions));
     localStorage.setItem(ck('ledger_ob'),  JSON.stringify(openingBalances));
     localStorage.setItem(ck('ledger_sh'),  JSON.stringify(shEntries||[]));
+    localStorage.setItem(ck('ledger_payroll'), JSON.stringify(payRuns||[]));
     localStorage.setItem(ck('ledger_inv'), JSON.stringify(invoices||[]));
     localStorage.setItem(ck('ledger_invnum'), String(invNextNum||1));
     localStorage.setItem(ck('ledger_ho'),  JSON.stringify(hoData||{}));
@@ -2000,6 +2047,7 @@ const load = () => {
   try { const d = localStorage.getItem(ck('ledger_txs')); if(d) transactions = JSON.parse(d); } catch{}
   try { const d = localStorage.getItem(ck('ledger_ob'));  if(d) openingBalances = JSON.parse(d); } catch{}
   try { const d = localStorage.getItem(ck('ledger_sh'));  if(d) shEntries = JSON.parse(d); } catch{}
+  try { const d = localStorage.getItem(ck('ledger_payroll')); if(d) payRuns = JSON.parse(d); } catch{}
   try { const d = localStorage.getItem(ck('ledger_inv')); if(d) invoices = JSON.parse(d); } catch{}
   try { const n = localStorage.getItem(ck('ledger_invnum')); if(n) invNextNum = parseInt(n)||1; } catch{}
   try { const d = localStorage.getItem(ck('ledger_ho'));  if(d) hoData = JSON.parse(d); } catch{}
@@ -4120,6 +4168,23 @@ function buildLedger(txList) {
       ledger[name].debit  += bal.debit;
       ledger[name].credit += bal.credit;
     });
+    // Merge payroll pay runs. Pay runs NEVER touch the bank — the imported net-pay withdrawal
+    // (categorized 'Wages Payable') and CRA remittance (categorized 'Payroll Deductions Payable')
+    // clear the liabilities, so wages can never be double-counted between payroll and the bank.
+    payRuns.forEach(pr => {
+      const g   = Math.max(0, parseFloat(pr.gross)||0);
+      const cpp = Math.max(0, parseFloat(pr.cpp)||0);
+      const ei  = Math.max(0, parseFloat(pr.ei)||0);
+      const tax = Math.max(0, parseFloat(pr.tax)||0);
+      const erC = Math.max(0, parseFloat(pr.employerCpp)||0);
+      const erE = Math.max(0, parseFloat(pr.employerEi)||0);
+      const net = g - cpp - ei - tax;
+      if(g <= 0 || net < 0) return;   // incomplete/invalid rows never post one-sided
+      ensure('Salaries, Wages & Benefits'); ensure('Payroll Deductions Payable'); ensure('Wages Payable');
+      ledger['Salaries, Wages & Benefits'].debit    += g + erC + erE;   // total employment cost
+      ledger['Payroll Deductions Payable'].credit   += cpp + ei + tax + erC + erE;
+      ledger['Wages Payable'].credit                += net;
+    });
     // Merge invoice postings: every non-void/draft invoice recognizes revenue and opens A/R.
     // A/R is cleared ONLY by a linked bank/cash transaction (DR Bank / CR A/R, posted in the tx
     // loop above when a deposit is linked). The invoice's "paid" status is a display label and
@@ -4281,6 +4346,15 @@ function runControlChecks() {
       && (linkedByInv[i.id]||0) < (parseFloat(i.total)||0) - 0.01).length;
     if(unlinkedPaid)
       push('warn', `${unlinkedPaid} invoice${unlinkedPaid!==1?'s':''} marked paid/partial without matching linked deposits — A/R stays open until the deposit is linked`);
+
+    // 8. Payroll clearing: Wages Payable should net to zero once every recorded pay run's
+    //    withdrawal has been categorized. Positive = net pay recorded, bank withdrawal not yet
+    //    categorized to 'Wages Payable'. Negative = a withdrawal was categorized with no pay run.
+    const wpBal = full['Wages Payable'] ? +(full['Wages Payable'].clCr - full['Wages Payable'].clDr).toFixed(2) : 0;
+    if(wpBal < -0.01)
+      push('error', `Wages Payable is over-cleared by ${fmt(Math.abs(wpBal))} — a bank withdrawal was categorized 'Wages Payable' with no matching pay run recorded in Payroll`);
+    else if(wpBal > 0.01 && payRuns.length)
+      push('warn', `Wages Payable outstanding ${fmt(wpBal)} — net pay recorded in Payroll but the bank withdrawal hasn't been categorized 'Wages Payable' yet`);
   } catch(err) {
     push('error', 'Control checks could not run: ' + (err && err.message || err));
   }
@@ -4798,6 +4872,26 @@ function buildGLAccounts() {
     accounts['Due to Shareholder'].entries.push({date:e.date, description:label, source:'Shareholder', dr:0, cr:amt});
   });
 
+  // 3b. Payroll pay runs — DR wages (total cost) / CR Payroll Deductions Payable / CR Wages Payable.
+  // Mirrors buildLedger exactly; the bank legs come from imported transactions, never from here.
+  payRuns.forEach(pr => {
+    const g   = Math.max(0, parseFloat(pr.gross)||0);
+    const cpp = Math.max(0, parseFloat(pr.cpp)||0);
+    const ei  = Math.max(0, parseFloat(pr.ei)||0);
+    const tax = Math.max(0, parseFloat(pr.tax)||0);
+    const erC = Math.max(0, parseFloat(pr.employerCpp)||0);
+    const erE = Math.max(0, parseFloat(pr.employerEi)||0);
+    const net = g - cpp - ei - tax;
+    if(g <= 0 || net < 0) return;
+    ensure('Salaries, Wages & Benefits', 'expense');
+    ensure('Payroll Deductions Payable', 'liability');
+    ensure('Wages Payable', 'liability');
+    const label = `Pay run — ${pr.employee||'employee'}`;
+    accounts['Salaries, Wages & Benefits'].entries.push({date:pr.date, description:label, source:'Payroll', dr:g+erC+erE, cr:0});
+    accounts['Payroll Deductions Payable'].entries.push({date:pr.date, description:label+' (withholdings + employer CPP/EI)', source:'Payroll', dr:0, cr:cpp+ei+tax+erC+erE});
+    accounts['Wages Payable'].entries.push({date:pr.date, description:label+' (net pay)', source:'Payroll', dr:0, cr:net});
+  });
+
   // 4a. Adjusting Journal Entries (skip the unsaved draft and any unbalanced entry, matching buildLedger)
   adjustingEntries.forEach(e => {
     if(e.id === 'new') return;
@@ -5206,6 +5300,13 @@ const FIELD_CODES = {
   'TX.HST': {kind:'calc',  label:'Transaction HST',     formula:'Inclusive: amount − amount ÷ (1 + rate%) · Exclusive: amount × rate% · Manual: as entered · None: 0. Clamped to [0, amount] when posting. Default rate from province.'},
   'SH.AMT': {kind:'input', label:'Shareholder amount (gross)', formula:'Entered GROSS (HST included). Posts: DR expense (net) + DR GST/HST ITC / CR Due to Shareholder (gross).'},
   'SH.HST': {kind:'calc',  label:'Shareholder HST',     formula:'Default Inclusive: amount − amount ÷ (1 + rate%) — e.g. 13/113 of gross at 13%. Manual/None override per line.'},
+  'PR.GROSS':{kind:'input', label:'Pay run gross pay',  formula:'As entered (from CRA PDOC). Posts into DR Salaries, Wages & Benefits together with employer portions.'},
+  'PR.CPP': {kind:'input', label:'Employee CPP withheld', formula:'From PDOC. Posts CR Payroll Deductions Payable; auto-fills Employer CPP (×1).'},
+  'PR.EI':  {kind:'input', label:'Employee EI withheld',  formula:'From PDOC. Posts CR Payroll Deductions Payable; auto-fills Employer EI (×1.4).'},
+  'PR.TAX': {kind:'input', label:'Income tax withheld',   formula:'From PDOC. Posts CR Payroll Deductions Payable.'},
+  'PR.ERCPP':{kind:'calc', label:'Employer CPP',        formula:'= employee CPP × 1 (CRA match). Editable for special cases. Posts DR wages + CR Deductions Payable.'},
+  'PR.EREI':{kind:'calc', label:'Employer EI',          formula:'= employee EI × 1.4 (CRA rate). Editable for special cases. Posts DR wages + CR Deductions Payable.'},
+  'PR.NET': {kind:'calc', label:'Net pay',              formula:'PR.GROSS − PR.CPP − PR.EI − PR.TAX. Posts CR Wages Payable; cleared when the bank withdrawal is categorized to Wages Payable.'},
   'INV.SUB':{kind:'input', label:'Invoice subtotal',    formula:'Entered net of HST. Posts CR revenue (net).'},
   'INV.HST':{kind:'calc',  label:'Invoice HST',         formula:'Exclusive: subtotal × rate% · Manual: as entered. Posts CR GST/HST Payable.'},
   'INV.TOT':{kind:'calc',  label:'Invoice total',       formula:'INV.SUB + INV.HST. Posts DR Accounts Receivable (gross); cleared only by linked deposits.'},
@@ -5769,7 +5870,7 @@ function showView(v) {
   document.querySelectorAll('.nav-item').forEach(el=>el.classList.remove('active'));
   const titles = {
     dashboard:'Dashboard', transactions:'Transactions', invoices:'Invoices / Sales',
-    shareholder:'Shareholder Expenses', homeoffice:'Home Office Expenses',
+    shareholder:'Shareholder Expenses', payroll:'Payroll', homeoffice:'Home Office Expenses',
     assets:'Fixed Assets / CCA', opening:'Opening Trial Balance',
     aje:'Journal Entries',
     recon:'Bank Reconciliation',
@@ -5836,6 +5937,7 @@ function renderAll() {
   if(currentView==='transactions') renderTransactions();
   if(currentView==='invoices')     renderInvoices();
   if(currentView==='shareholder')  renderShareholder();
+  if(currentView==='payroll')      renderPayroll();
   if(currentView==='homeoffice')   hoRecalc();
   if(currentView==='assets')       renderAssets();
   if(currentView==='aje')          renderAJE();
@@ -5864,6 +5966,7 @@ document.addEventListener('mousedown', e => {
 // SHAREHOLDER EXPENSES
 // ═══════════════════════════════════════════════
 let shEntries = [];       // shareholder expense entries
+let payRuns = [];         // payroll pay runs: {id,date,employee,gross,cpp,ei,tax,employerCpp,employerEi,netPay,notes}
 let invoices  = [];       // sales invoices
 let adjustingEntries = []; // [{id,date,reference,description,type,lines:[{account,debit,credit}]}]
 let invNextNum = 1;       // auto-increment invoice number
@@ -6205,6 +6308,158 @@ function exportShCsv() {
   a.href='data:text/csv;charset=utf-8,'+encodeURIComponent(csv);
   a.download='shareholder-expenses.csv'; a.click();
   toast('Exported shareholder expenses');
+}
+
+// ═══════════════════════════════════════════════
+// PAYROLL — pay-run RECORDING (amounts come from CRA's PDOC; this module does not
+// compute withholdings). Posts DR wages / CR Payroll Deductions Payable / CR Wages Payable.
+// Bank legs come only from imported transactions categorized to the two liability accounts.
+// ═══════════════════════════════════════════════
+let prEditingId = null;
+
+function addPayRun() {
+  const pr = {
+    id: `pr-${Date.now()}`,
+    date: new Date().toISOString().slice(0,10),
+    employee: '',
+    gross: 0, cpp: 0, ei: 0, tax: 0,
+    employerCpp: 0, employerEi: 0,   // auto-filled: CPP ×1, EI ×1.4 (editable)
+    notes: ''
+  };
+  payRuns.unshift(pr);
+  save();
+  prEditingId = pr.id;
+  renderPayroll();
+}
+
+function prNet(pr) {
+  return (parseFloat(pr.gross)||0) - (parseFloat(pr.cpp)||0) - (parseFloat(pr.ei)||0) - (parseFloat(pr.tax)||0);
+}
+
+function updatePayRunField(id, field, value) {
+  const num = new Set(['gross','cpp','ei','tax','employerCpp','employerEi']);
+  payRuns = payRuns.map(p => p.id===id ? {...p, [field]: num.has(field) ? (parseFloat(value)||0) : value} : p);
+  // Employer portions follow CRA rules automatically: employer CPP matches the employee's,
+  // employer EI is 1.4× the employee's. Both stay editable for special cases.
+  if(field==='cpp' || field==='ei') {
+    payRuns = payRuns.map(p => {
+      if(p.id!==id) return p;
+      const upd = {...p};
+      if(field==='cpp') upd.employerCpp = +( (parseFloat(p.cpp)||0) ).toFixed(2);
+      if(field==='ei')  upd.employerEi  = +( (parseFloat(p.ei)||0) * 1.4 ).toFixed(2);
+      return upd;
+    });
+    const p = payRuns.find(x=>x.id===id);
+    const ec = document.getElementById(`pr-ercpp-${id}`), ee = document.getElementById(`pr-erei-${id}`);
+    if(ec && field==='cpp') ec.value = p.employerCpp;
+    if(ee && field==='ei')  ee.value = p.employerEi;
+  }
+  const p = payRuns.find(x=>x.id===id);
+  const netEl = document.getElementById(`pr-net-${id}`);
+  if(netEl && p) netEl.textContent = fmt(prNet(p));
+  save();
+}
+
+function deletePayRun(id) {
+  if(!confirm('Delete this pay run?')) return;
+  payRuns = payRuns.filter(p=>p.id!==id);
+  prEditingId = null;
+  save(); renderAll(); renderPayroll();
+}
+
+function prStopEdit() { prEditingId = null; save(); renderPayroll(); renderAll(); }
+
+function renderPayroll() {
+  const tbody = document.getElementById('pr-tbody');
+  const tfoot = document.getElementById('pr-tfoot');
+  if(!tbody) return;
+
+  const td  = (v,right) => `<td style="padding:8px;border-bottom:1px solid var(--border);font-size:12px;${right?'text-align:right;font-family:var(--mono)':''}">${v}</td>`;
+
+  tbody.innerHTML = payRuns.map(pr => {
+    if(pr.id === prEditingId) return renderPayRunEditRow(pr);
+    const totalEr = (parseFloat(pr.employerCpp)||0) + (parseFloat(pr.employerEi)||0);
+    return `<tr class="tx-row" data-id="${pr.id}" onclick="prEditingId='${pr.id}';renderPayroll()">
+      ${td(fmtDate(pr.date))}
+      ${td(esc(pr.employee)||'<em style="color:var(--text3)">No name</em>')}
+      ${td(fmt(parseFloat(pr.gross)||0),1)}
+      ${td(fmt(parseFloat(pr.cpp)||0),1)}
+      ${td(fmt(parseFloat(pr.ei)||0),1)}
+      ${td(fmt(parseFloat(pr.tax)||0),1)}
+      ${td(fmt(totalEr),1)}
+      ${td('<strong>'+fmt(prNet(pr))+'</strong>',1)}
+    </tr>`;
+  }).join('') || '<tr><td colspan="8" style="padding:16px;color:var(--text3);font-size:12px">No pay runs yet. Click “+ Add Pay Run” and enter the figures from CRA’s PDOC calculator.</td></tr>';
+
+  // Totals + liability status
+  const sum = f => payRuns.reduce((s,p)=>s+(parseFloat(p[f])||0),0);
+  const totNet = payRuns.reduce((s,p)=>s+prNet(p),0);
+  const totEr  = sum('employerCpp')+sum('employerEi');
+  tfoot.innerHTML = payRuns.length ? `<tr style="background:var(--surface2)">
+    ${td('<strong>Total</strong>')}${td('')}
+    ${td('<strong>'+fmt(sum('gross'))+'</strong>',1)}
+    ${td('<strong>'+fmt(sum('cpp'))+'</strong>',1)}
+    ${td('<strong>'+fmt(sum('ei'))+'</strong>',1)}
+    ${td('<strong>'+fmt(sum('tax'))+'</strong>',1)}
+    ${td('<strong>'+fmt(totEr)+'</strong>',1)}
+    ${td('<strong>'+fmt(totNet)+'</strong>',1)}
+  </tr>` : '';
+
+  const summary = document.getElementById('pr-summary');
+  if(summary) {
+    const full = buildFullLedger();
+    const wp  = full['Wages Payable'] ? +(full['Wages Payable'].clCr - full['Wages Payable'].clDr).toFixed(2) : 0;
+    const pdp = full['Payroll Deductions Payable'] ? +(full['Payroll Deductions Payable'].clCr - full['Payroll Deductions Payable'].clDr).toFixed(2) : 0;
+    summary.innerHTML =
+      `<span>Wages Payable outstanding: <strong style="color:${Math.abs(wp)<0.01?'var(--accent)':'var(--warning)'}">${fmt(wp)}</strong>${Math.abs(wp)<0.01?' ✓ all net pay matched':''}</span>` +
+      `<span>Owed to CRA (deductions): <strong>${fmt(pdp)}</strong></span>`;
+  }
+}
+
+function renderPayRunEditRow(pr) {
+  const num = (id,field,val,extra) => `<input class="edit-input" type="number" step="0.01" value="${val}" id="pr-${id}-${pr.id}"
+    oninput="event.stopPropagation();updatePayRunField('${pr.id}','${field}',this.value)" ${extra||''}>`;
+  return `<tr class="edit-row" data-id="${pr.id}">
+    <td colspan="8" style="padding:14px 16px" onclick="event.stopPropagation()">
+      <div style="display:grid;grid-template-columns:130px 1fr 110px 110px 110px 110px;gap:8px;margin-bottom:8px">
+        <div><div class="edit-label">Date</div>
+          <input class="edit-input" type="date" value="${pr.date}" onchange="updatePayRunField('${pr.id}','date',this.value)"></div>
+        <div><div class="edit-label">Employee</div>
+          <input class="edit-input" value="${esc(pr.employee)}" placeholder="Employee name"
+            oninput="updatePayRunField('${pr.id}','employee',this.value)"></div>
+        <div><div class="edit-label">Gross Pay${fcode('PR.GROSS')}</div>${num('gross','gross',pr.gross||0)}</div>
+        <div><div class="edit-label">CPP withheld${fcode('PR.CPP')}</div>${num('cpp','cpp',pr.cpp||0)}</div>
+        <div><div class="edit-label">EI withheld${fcode('PR.EI')}</div>${num('ei','ei',pr.ei||0)}</div>
+        <div><div class="edit-label">Income tax${fcode('PR.TAX')}</div>${num('tax','tax',pr.tax||0)}</div>
+      </div>
+      <div style="display:grid;grid-template-columns:130px 130px 1fr 160px;gap:8px;margin-bottom:10px">
+        <div><div class="edit-label">Employer CPP${fcode('PR.ERCPP')}</div>${num('ercpp','employerCpp',pr.employerCpp||0)}</div>
+        <div><div class="edit-label">Employer EI${fcode('PR.EREI')}</div>${num('erei','employerEi',pr.employerEi||0)}</div>
+        <div><div class="edit-label">Notes</div>
+          <input class="edit-input" value="${esc(pr.notes)}" placeholder="Pay period, cheque #, etc."
+            oninput="updatePayRunField('${pr.id}','notes',this.value)"></div>
+        <div><div class="edit-label">Net Pay${fcode('PR.NET')}</div>
+          <div style="padding:8px 10px;background:var(--surface2);border-radius:var(--radius);font-family:var(--mono);font-weight:600" id="pr-net-${pr.id}">${fmt(prNet(pr))}</div></div>
+      </div>
+      <div style="display:flex;gap:8px;align-items:center">
+        <button class="btn btn-primary btn-sm" onclick="prStopEdit()">✓ Done</button>
+        <button class="btn btn-sm btn-danger" onclick="deletePayRun('${pr.id}')">Delete</button>
+        <span style="font-size:11px;color:var(--text3)">Posts: DR Wages ${fmt((parseFloat(pr.gross)||0)+(parseFloat(pr.employerCpp)||0)+(parseFloat(pr.employerEi)||0))} / CR Deductions Payable / CR Wages Payable ${fmt(prNet(pr))}</span>
+      </div>
+    </td>
+  </tr>`;
+}
+
+function exportPayrollCsv() {
+  const rows = [['Date','Employee','Gross','CPP','EI','Income Tax','Employer CPP','Employer EI','Net Pay','Notes']];
+  payRuns.forEach(p => rows.push([p.date, p.employee, parseFloat(p.gross)||0, parseFloat(p.cpp)||0,
+    parseFloat(p.ei)||0, parseFloat(p.tax)||0, parseFloat(p.employerCpp)||0, parseFloat(p.employerEi)||0,
+    +prNet(p).toFixed(2), p.notes||'']));
+  const csv = rows.map(csvRow).join('\n');
+  const a = document.createElement('a');
+  a.href = 'data:text/csv;charset=utf-8,'+encodeURIComponent(csv);
+  a.download = 'payroll-export.csv'; a.click();
+  toast('Exported payroll');
 }
 
 // ═══════════════════════════════════════════════
@@ -7685,7 +7940,7 @@ function blankConfig() {
   };
 }
 function resetInMemory() {
-  transactions = []; openingBalances = []; shEntries = []; invoices = [];
+  transactions = []; openingBalances = []; shEntries = []; invoices = []; payRuns = [];
   invNextNum = 1; hoData = { sqftTotal:0, sqftBiz:0, years:{} };
   fixedAssets = []; adjustingEntries = []; companyConfig = blankConfig();
   selectedIds.clear(); editingId = null;
@@ -7830,6 +8085,7 @@ function backupAllData() {
       fixedAssets,
       companyConfig,
       adjustingEntries,
+      payRuns,
     }
   };
 
@@ -7872,7 +8128,7 @@ function restoreBackup(input) {
       const bad = [];
       [['transactions',Array.isArray],['openingBalances',Array.isArray],['shEntries',Array.isArray],
        ['invoices',Array.isArray],['fixedAssets',Array.isArray],['adjustingEntries',Array.isArray],
-       ['companyConfig',isObj],['hoData',isObj]].forEach(([k,ok]) => {
+       ['payRuns',Array.isArray],['companyConfig',isObj],['hoData',isObj]].forEach(([k,ok]) => {
         if(d[k] !== undefined && !ok(d[k])) bad.push(k);
       });
       if(d.invNextNum !== undefined && !(typeof d.invNextNum==='number' || /^\d+$/.test(String(d.invNextNum)))) bad.push('invNextNum');
@@ -7901,7 +8157,7 @@ function restoreBackup(input) {
       if(!confirm(msg)) { input.value=''; return; }
 
       // Snapshot current in-memory state so a failure while applying can be rolled back this session.
-      const prev = { transactions, openingBalances, shEntries, invoices, invNextNum, hoData, fixedAssets, companyConfig, adjustingEntries };
+      const prev = { transactions, openingBalances, shEntries, invoices, invNextNum, hoData, fixedAssets, companyConfig, adjustingEntries, payRuns };
       try {
         // Restore all data (use !== undefined so legit values like invNextNum:0 / empty arrays apply)
         if(d.transactions    !== undefined) transactions    = d.transactions;
@@ -7913,6 +8169,7 @@ function restoreBackup(input) {
         if(d.fixedAssets     !== undefined) fixedAssets     = d.fixedAssets;
         if(d.companyConfig   !== undefined) companyConfig   = d.companyConfig;
         if(d.adjustingEntries!== undefined) adjustingEntries= d.adjustingEntries;
+        if(d.payRuns         !== undefined) payRuns         = d.payRuns;
 
         refreshAccountSets();
         save();
@@ -7921,7 +8178,7 @@ function restoreBackup(input) {
         toast(`✓ Restored ${txCount} transactions, ${invCount} invoices, ${shCount} shareholder entries from ${exportDate}`);
       } catch(applyErr) {
         // Roll back so the user does not lose their prior data within this session
-        ({ transactions, openingBalances, shEntries, invoices, invNextNum, hoData, fixedAssets, companyConfig, adjustingEntries } = prev);
+        ({ transactions, openingBalances, shEntries, invoices, invNextNum, hoData, fixedAssets, companyConfig, adjustingEntries, payRuns } = prev);
         console.error(applyErr);
         try { refreshAccountSets(); renderAll(); } catch(_) {}
         toast('❌ Restore failed while applying — reverted to your previous data');

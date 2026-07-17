@@ -290,6 +290,7 @@ test('GL model ties to Trial Balance on every account (invoices+sh+AJE+CCA scena
                 {id:'w2',date:'2026-05-01',amount:500,account:'Savings', category:'Transfer',transferDir:'in', transferPairId:'p1'}];
   invoices=[{id:'i1',status:'sent',total:1130,hstAmount:130,subtotal:1000,category:'Sales Revenue',client:'T',date:'2026-01-15',invoiceNum:'INV-1'}];
   shEntries=[{id:'s1',date:'2026-02-01',description:'x',shareholder:'O',amount:113,hstAmount:13,category:'Office Expenses',status:'pending'}];
+  payRuns=[{id:'p1',date:'2026-03-15',employee:'A',gross:5000,cpp:300,ei:100,tax:600,employerCpp:300,employerEi:140,notes:''}];
   adjustingEntries=[{id:'j1',date:'2026-06-30',lines:[{account:'Rent',debit:200,credit:0},{account:'Chequing',debit:0,credit:200}]}];
   fixedAssets=[{id:'f1',name:'L',cost:10000,ccaClass:'8',acquiredDate:'2026-03-01',active:true,
     years:{'2026':{openingUCC:0,additions:10000,disposals:0,ccaClaimed:0}}}];
@@ -448,6 +449,57 @@ test('Duplicate account names are impossible: entry guard + defensive COA merge'
   } finally { companyConfig = cfgSnap; refreshAccountSets(); }
 `);
 
+group('E. Payroll (clearing-account model — no bank double-count possible)');
+
+test('Pay run posts balanced: wages gross+employer, deductions payable, wages payable', `
+  __reset();
+  payRuns=[{id:'p1',date:'2026-03-15',employee:'A',gross:5000,cpp:300,ei:100,tax:600,employerCpp:300,employerEi:140,notes:''}];
+  const d=__tbDiff();
+  return {pass: d===0 && __bal('Salaries, Wages & Benefits')===5440
+              && __bal('Payroll Deductions Payable')===-1440
+              && __bal('Wages Payable')===-4000,
+          got:'diff='+d+' wages='+__bal('Salaries, Wages & Benefits')+' pdp='+__bal('Payroll Deductions Payable')+' wp='+__bal('Wages Payable')};
+`);
+
+test('Bank withdrawal categorized "Wages Payable" clears the liability — counted once', `
+  __reset();
+  payRuns=[{id:'p1',date:'2026-03-15',employee:'A',gross:5000,cpp:300,ei:100,tax:600,employerCpp:300,employerEi:140,notes:''}];
+  transactions=[{id:'t1',date:'2026-03-16',amount:-4000,account:'Chequing',category:'Wages Payable',description:'PAYROLL'}];
+  const d=__tbDiff();
+  const noWpIssue = !runControlChecks().some(i=>/Wages Payable/.test(i.msg));
+  return {pass: d===0 && __bal('Wages Payable')===0 && __bal('Chequing')===-4000
+              && __bal('Salaries, Wages & Benefits')===5440 && noWpIssue,
+          got:'diff='+d+' wp='+__bal('Wages Payable')+' wages='+__bal('Salaries, Wages & Benefits')+' controlsClean='+noWpIssue};
+`);
+
+test('Controls flag unmatched payroll both ways', `
+  __reset();
+  payRuns=[{id:'p1',date:'2026-03-15',employee:'A',gross:5000,cpp:300,ei:100,tax:600,employerCpp:300,employerEi:140,notes:''}];
+  const warn = runControlChecks().some(i=>i.level==='warn' && /hasn't been categorized/.test(i.msg));
+  __reset();
+  transactions=[{id:'t1',date:'2026-03-16',amount:-4000,account:'Chequing',category:'Wages Payable',description:'PAYROLL'}];
+  const err = runControlChecks().some(i=>i.level==='error' && /over-cleared/.test(i.msg));
+  return {pass: warn && err, got:'warnWhenUnmatched='+warn+' errorWhenOverCleared='+err};
+`);
+
+test('Employer portions auto-calc: CPP ×1, EI ×1.4; net pay = gross − withholdings', `
+  __reset();
+  payRuns=[{id:'p1',date:'2026-03-15',employee:'A',gross:5000,cpp:0,ei:0,tax:600,employerCpp:0,employerEi:0,notes:''}];
+  updatePayRunField('p1','cpp',300);
+  updatePayRunField('p1','ei',100);
+  const p = payRuns.find(x=>x.id==='p1');
+  return {pass: p.employerCpp===300 && p.employerEi===140 && Math.abs(prNet(p)-4000)<0.01,
+          got:'erCpp='+p.employerCpp+' erEi='+p.employerEi+' net='+prNet(p)};
+`);
+
+test('CRA remittance categorized "Payroll Deductions Payable" clears the CRA liability', `
+  __reset();
+  payRuns=[{id:'p1',date:'2026-03-15',employee:'A',gross:5000,cpp:300,ei:100,tax:600,employerCpp:300,employerEi:140,notes:''}];
+  transactions=[{id:'t1',date:'2026-04-15',amount:-1440,account:'Chequing',category:'Payroll Deductions Payable',description:'CRA RP remittance'}];
+  const d=__tbDiff();
+  return {pass: d===0 && __bal('Payroll Deductions Payable')===0, got:'diff='+d+' pdp='+__bal('Payroll Deductions Payable')};
+`);
+
 /* ════════════ runner ════════════ */
 const iframe = document.getElementById('app');
 iframe.onload = () => setTimeout(run, 400);
@@ -460,10 +512,10 @@ function run(){
 
   W.eval(`
     window.__snap = () => ({tx:transactions, inv:invoices, ob:openingBalances, aje:adjustingEntries,
-      sh:shEntries, fa:fixedAssets, cfg:companyConfig, inn:invNextNum, ho:hoData});
+      sh:shEntries, fa:fixedAssets, cfg:companyConfig, inn:invNextNum, ho:hoData, pr:payRuns});
     window.__restore = s => { transactions=s.tx; invoices=s.inv; openingBalances=s.ob; adjustingEntries=s.aje;
-      shEntries=s.sh; fixedAssets=s.fa; companyConfig=s.cfg; invNextNum=s.inn; hoData=s.ho; };
-    window.__reset = () => { transactions=[]; invoices=[]; openingBalances=[]; adjustingEntries=[]; shEntries=[]; fixedAssets=[]; };
+      shEntries=s.sh; fixedAssets=s.fa; companyConfig=s.cfg; invNextNum=s.inn; hoData=s.ho; payRuns=s.pr; };
+    window.__reset = () => { transactions=[]; invoices=[]; openingBalances=[]; adjustingEntries=[]; shEntries=[]; fixedAssets=[]; payRuns=[]; };
     window.__tbDiff = () => { const f=buildFullLedger(); let d=0,c=0; Object.values(f).forEach(a=>{d+=a.clDr;c+=a.clCr;}); return +Math.abs(d-c).toFixed(2); };
     window.__bal = n => { const f=buildFullLedger(); return f[n]?+(f[n].clDr-f[n].clCr).toFixed(2):0; };
     window.__cell = (sel,label) => {
