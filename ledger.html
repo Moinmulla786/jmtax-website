@@ -1650,9 +1650,10 @@
 // Every export, backup, and save is stamped with both, so any file can be traced to
 // the exact software version that produced it.
 // ═══════════════════════════════════════════════════════════════
-const APP_VERSION  = '2.4.4';
+const APP_VERSION  = '2.4.5';
 const DATA_VERSION = 1;
 const APP_CHANGELOG = [
+  ['2.4.5', '2026-07-17', 'Shareholder dropdowns now sync with Company Settings: names defined in Settings → Shareholders appear in the expense editor (plus historical names on existing entries); new entries default to your first real shareholder instead of "Shareholder 1".'],
   ['2.4.4', '2026-07-17', 'Payroll: top toolbar now shows the right actions (Add Pay Run, PDOC link, Export). Previously it fell back to a generic "Add Entry" that created a bank transaction — misleading on the Payroll page.'],
   ['2.4.3', '2026-07-17', 'Payroll: employee selector is now a true dropdown with a "➕ Add new employee…" option — pick from everyone previously paid, or add a name on the spot.'],
   ['2.4.2', '2026-07-17', 'Payroll: employee name is now a dropdown (type-ahead) of everyone previously paid — deduped and sorted; new names can still be typed for a first pay run.'],
@@ -6004,12 +6005,21 @@ let shSelectedIds = new Set();
 
 // Default shareholders
 const DEFAULT_SHAREHOLDERS = ['Shareholder 1', 'Shareholder 2'];
+// Single source for every shareholder dropdown: names from Company Settings first,
+// plus any names already used on entries (historical); the generic defaults appear
+// only when neither exists yet.
+function getShareholderNames() {
+  const cfg  = (companyConfig.shareholders||[]).map(s=>String(s.name||'').trim()).filter(Boolean);
+  const used = shEntries.map(x=>x.shareholder).filter(Boolean);
+  const all  = [...new Set([...cfg, ...used])].sort();
+  return all.length ? all : [...DEFAULT_SHAREHOLDERS];
+}
 
 function addShEntry() {
   const entry = {
     id: `sh-${Date.now()}`,
     date: new Date().toISOString().slice(0,10),
-    shareholder: DEFAULT_SHAREHOLDERS[0],
+    shareholder: getShareholderNames()[0],
     description: '',
     category: 'Uncategorized',
     amount: 0,
@@ -6111,7 +6121,7 @@ function renderShareholder() {
 
 function renderShEditRow(e) {
   const catOpts = CATEGORIES.map(c=>`<option${c===e.category?' selected':''}>${esc(c)}</option>`).join('');
-  const shOpts  = [...new Set([...DEFAULT_SHAREHOLDERS, ...shEntries.map(x=>x.shareholder)])].map(
+  const shOpts  = getShareholderNames().map(
     s=>`<option${s===e.shareholder?' selected':''}>${esc(s)}</option>`).join('');
   const hstType = e.hstType||'none';
   const hstRate = e.hstRate!==undefined ? e.hstRate : defaultHstRate();
@@ -6130,7 +6140,7 @@ function renderShEditRow(e) {
           <input class="edit-input" list="sh-datalist-${e.id}" value="${esc(e.shareholder)}"
             oninput="event.stopPropagation();updateShField('${e.id}','shareholder',this.value)">
           <datalist id="sh-datalist-${e.id}">
-            ${[...new Set([...DEFAULT_SHAREHOLDERS,...shEntries.map(x=>x.shareholder)])].map(s=>`<option value="${esc(s)}">`).join('')}
+            ${getShareholderNames().map(s=>`<option value="${esc(s)}">`).join('')}
           </datalist>
         </div>
         <div>
