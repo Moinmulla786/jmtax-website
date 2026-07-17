@@ -1678,9 +1678,10 @@
 // Every export, backup, and save is stamped with both, so any file can be traced to
 // the exact software version that produced it.
 // ═══════════════════════════════════════════════════════════════
-const APP_VERSION  = '2.4.7';
+const APP_VERSION  = '2.4.8';
 const DATA_VERSION = 1;
 const APP_CHANGELOG = [
+  ['2.4.8', '2026-07-17', 'Category dropdowns now show each account under its Chart-of-Accounts group (Revenue, Operating Expenses, Current Liabilities…), in statement order — transactions editor and filter, shareholder editor and filter, and invoice editor, matching the journal-entry editor.'],
   ['2.4.7', '2026-07-17', 'Navigation reorganized by workflow: Sales & Income → Expenses & Payroll → Banking → Assets & Year-End → Review → Setup, with clearer icons. Reports styled as the standout destination. Report tabs regrouped: Statements (P&L, Balance Sheet) · Working papers (TB, GL, A/R) · CRA filings (HST, GIFI). Cosmetic only.'],
   ['2.4.6', '2026-07-17', 'Home Office: shareholder dropdown (synced with Company Settings) chooses whose home the expenses post under. Also fixed: posted entries now use real COA accounts (Rent, Utilities, Interest & Bank Charges, Repairs & Maintenance) — the old "Rent & Utilities" name was not in the chart of accounts and was mistyped as an asset on the Trial Balance.'],
   ['2.4.5', '2026-07-17', 'Shareholder dropdowns now sync with Company Settings: names defined in Settings → Shareholders appear in the expense editor (plus historical names on existing entries); new entries default to your first real shareholder instead of "Shareholder 1".'],
@@ -3653,11 +3654,11 @@ function renderTransactions() {
   const cats = [...new Set(transactions.map(t=>t.category).filter(Boolean))].sort();
   const catFilter = document.getElementById('category-filter');
   const curVal = catFilter.value;
-  catFilter.innerHTML = '<option value="">All Categories</option>' + cats.map(c=>`<option${c===curVal?' selected':''}>${esc(c)}</option>`).join('');
+  catFilter.innerHTML = '<option value="">All Categories</option>' + categoryOptGroups(cats, curVal);
 }
 
 function renderEditRow(tx) {
-  const catOpts = CATEGORIES.map(c=>`<option${c===tx.category?' selected':''}>${esc(c)}</option>`).join('');
+  const catOpts = categoryOptGroups(CATEGORIES, tx.category);
   const accOpts = ACCOUNTS.map(a=>`<option${a===tx.account?' selected':''}>${esc(a)}</option>`).join('');
   const hstRate = tx.hstRate !== undefined ? tx.hstRate : defaultHstRate();
   const hstAmt  = tx.hstAmount !== undefined ? tx.hstAmount : 0;
@@ -5388,6 +5389,24 @@ function fieldCodeLookup() {
        <span style="font-family:var(--mono);font-size:10.5px;color:var(--text2)">${esc(r.formula)}</span>`;
 }
 
+// Category dropdown options grouped by their Chart-of-Accounts group (like the AJE editor):
+// <optgroup label="Current Liabilities"> etc., in statement order. Special items (Transfer,
+// Uncategorized) group under "Other".
+function categoryOptGroups(cats, selected) {
+  const eff = getEffectiveCOA();
+  const order = ['Revenue','Cost of Sales','Operating Expenses','Income Tax Expense',
+                 'Current Assets','Long-term Assets','Fixed Assets','Current Liabilities','Equity','Other'];
+  const buckets = {};
+  (cats||[]).forEach(c => {
+    const g = eff[c]?.group || 'Other';
+    (buckets[g] = buckets[g] || []).push(c);
+  });
+  const keys = [...order.filter(g=>buckets[g]), ...Object.keys(buckets).filter(g=>!order.includes(g))];
+  return keys.map(g=>`<optgroup label="${esc(g)}">${
+    buckets[g].map(c=>`<option value="${esc(c)}"${c===selected?' selected':''}>${esc(c)}</option>`).join('')
+  }</optgroup>`).join('');
+}
+
 // Collapsible "ƒ Calculation details" block appended to each report table.
 function formulaDetailsHtml(formulas, colspan, report) {
   if(!formulas || !Object.keys(formulas).length) return '';
@@ -6099,8 +6118,7 @@ function renderShareholder() {
   const cats = [...new Set(shEntries.map(e=>e.category))].sort();
   const catFilter = document.getElementById('sh-category-filter');
   const curCat = catFilter.value;
-  catFilter.innerHTML = '<option value="">All Categories</option>' +
-    cats.map(c=>`<option${c===curCat?' selected':''}>${esc(c)}</option>`).join('');
+  catFilter.innerHTML = '<option value="">All Categories</option>' + categoryOptGroups(cats, curCat);
 
   if(!filtered.length) {
     tbody.innerHTML = `<tr><td colspan="9"><div class="empty-state">
@@ -6150,7 +6168,7 @@ function renderShareholder() {
 }
 
 function renderShEditRow(e) {
-  const catOpts = CATEGORIES.map(c=>`<option${c===e.category?' selected':''}>${esc(c)}</option>`).join('');
+  const catOpts = categoryOptGroups(CATEGORIES, e.category);
   const shOpts  = getShareholderNames().map(
     s=>`<option${s===e.shareholder?' selected':''}>${esc(s)}</option>`).join('');
   const hstType = e.hstType||'none';
@@ -6705,9 +6723,11 @@ function renderInvoices() {
 }
 
 function renderInvEditRow(inv) {
-  const catOpts = ['Sales Revenue','Service Revenue','Cost of Goods Sold','Uncategorized']
-    .concat(CATEGORIES.filter(c=>!['Sales Revenue','Service Revenue','Cost of Goods Sold','Uncategorized'].includes(c)))
-    .map(c=>`<option${c===inv.category?' selected':''}>${esc(c)}</option>`).join('');
+  // Grouped like every other category dropdown; the ordering helper puts Revenue first,
+  // so the natural invoice categories lead the list.
+  const catOpts = categoryOptGroups(
+    [...new Set(['Sales Revenue','Service Revenue','Cost of Goods Sold','Uncategorized', ...CATEGORIES])],
+    inv.category);
   const hstType = inv.hstType||'none';
   const eff = autoInvStatus(inv);
 
