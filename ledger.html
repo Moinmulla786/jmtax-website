@@ -145,6 +145,21 @@
   .sidebar .nav-item { color: var(--text2); font-family: var(--sans); }
   .sidebar .nav-item:hover { background: rgba(18,115,196,0.08); color: var(--heading); }
   .sidebar .nav-item.active { background: var(--primary); color: #ffffff; box-shadow: 0 2px 8px rgba(18,115,196,.28); }
+  /* Reports is the destination — always visually prominent, even when not active */
+  .sidebar .nav-item.nav-reports {
+    background: var(--primary-light);
+    color: var(--primary-text);
+    font-weight: 600;
+    border: 1px solid var(--border2);
+  }
+  .sidebar .nav-item.nav-reports:hover { background: #d3e7f8; color: var(--primary-text); }
+  .sidebar .nav-item.nav-reports.active { background: var(--primary); color: #ffffff; border-color: var(--primary); }
+  /* Report tab group labels: Statements · Working papers · CRA filings */
+  .rtab-group {
+    font-size: 9px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase;
+    color: var(--text3); align-self: center; padding: 0 4px 0 12px; white-space: nowrap;
+  }
+  .rtab-group:first-child { padding-left: 4px; }
   .nav-icon { font-size: 15px; width: 18px; text-align: center; }
   .nav-section {
     font-size: 10px;
@@ -520,39 +535,44 @@
       <button class="nav-item active" onclick="showView('dashboard')">
         <span class="nav-icon">◈</span> Dashboard
       </button>
-      <div class="nav-section">Records</div>
-      <button class="nav-item" onclick="showView('transactions')">
-        <span class="nav-icon">≡</span> Transactions
-      </button>
+      <div class="nav-section">Sales &amp; Income</div>
       <button class="nav-item" onclick="showView('invoices')">
-        <span class="nav-icon">◻</span> Invoices / Sales
+        <span class="nav-icon">＄</span> Invoices / Sales
       </button>
+      <div class="nav-section">Expenses &amp; Payroll</div>
       <button class="nav-item" onclick="showView('shareholder')">
-        <span class="nav-icon">◑</span> Shareholder Expenses
+        <span class="nav-icon">⚇</span> Shareholder Expenses
       </button>
       <button class="nav-item" onclick="showView('payroll')">
-        <span class="nav-icon">◔</span> Payroll
+        <span class="nav-icon">⛁</span> Payroll
       </button>
       <button class="nav-item" onclick="showView('homeoffice')">
         <span class="nav-icon">⌂</span> Home Office
       </button>
-      <button class="nav-item" onclick="showView('assets')">
-        <span class="nav-icon">◫</span> Fixed Assets / CCA
+      <div class="nav-section">Banking</div>
+      <button class="nav-item" onclick="showView('transactions')">
+        <span class="nav-icon">≡</span> Transactions
       </button>
-      <button class="nav-item" onclick="showView('opening')">
-        <span class="nav-icon">◐</span> Opening Balances
+      <button class="nav-item" onclick="showView('recon')">
+        <span class="nav-icon">☑</span> Bank Reconciliation
+      </button>
+      <div class="nav-section">Assets &amp; Year-End</div>
+      <button class="nav-item" onclick="showView('assets')">
+        <span class="nav-icon">⚒</span> Fixed Assets / CCA
       </button>
       <button class="nav-item" onclick="showView('aje')">
         <span class="nav-icon">⇌</span> Journal Entries
       </button>
-      <button class="nav-item" onclick="showView('recon')">
-        <span class="nav-icon">⚖</span> Bank Reconciliation
+      <button class="nav-item" onclick="showView('opening')">
+        <span class="nav-icon">◐</span> Opening Balances
       </button>
-      <button class="nav-item" onclick="showView('reports')">
-        <span class="nav-icon">◎</span> Reports
+      <div class="nav-section">Review</div>
+      <button class="nav-item nav-reports" onclick="showView('reports')">
+        <span class="nav-icon">▤</span> Reports
       </button>
+      <div class="nav-section">Setup</div>
       <button class="nav-item" onclick="showView('coa')">
-        <span class="nav-icon">▤</span> Chart of Accounts
+        <span class="nav-icon">☰</span> Chart of Accounts
       </button>
       <div class="nav-section">Actions</div>
       <button class="nav-item" onclick="document.getElementById('file-input').click()">
@@ -1458,12 +1478,15 @@
         <div id="fcode-result" style="font-size:12px;margin:-4px 0 10px;color:var(--text2)"></div>
         <!-- Report tabs -->
         <div style="display:flex;gap:4px;margin-bottom:20px;background:var(--surface2);padding:4px;border-radius:var(--radius);width:fit-content;flex-wrap:wrap">
+          <span class="rtab-group">Statements</span>
           <button class="report-tab active" onclick="switchReport('pl')" id="rtab-pl">Profit &amp; Loss</button>
-          <button class="report-tab" onclick="switchReport('tb')" id="rtab-tb">Trial Balance</button>
           <button class="report-tab" onclick="switchReport('bs')" id="rtab-bs">Balance Sheet</button>
-          <button class="report-tab" onclick="switchReport('hst')" id="rtab-hst">HST Summary</button>
+          <span class="rtab-group">Working papers</span>
+          <button class="report-tab" onclick="switchReport('tb')" id="rtab-tb">Trial Balance</button>
           <button class="report-tab" onclick="switchReport('gl')" id="rtab-gl">General Ledger</button>
           <button class="report-tab" onclick="switchReport('ar')" id="rtab-ar">AR Ledger</button>
+          <span class="rtab-group">CRA filings</span>
+          <button class="report-tab" onclick="switchReport('hst')" id="rtab-hst">HST Summary</button>
           <button class="report-tab" onclick="switchReport('gifi')" id="rtab-gifi">GIFI (T2)</button>
         </div>
 
@@ -1655,9 +1678,10 @@
 // Every export, backup, and save is stamped with both, so any file can be traced to
 // the exact software version that produced it.
 // ═══════════════════════════════════════════════════════════════
-const APP_VERSION  = '2.4.6';
+const APP_VERSION  = '2.4.7';
 const DATA_VERSION = 1;
 const APP_CHANGELOG = [
+  ['2.4.7', '2026-07-17', 'Navigation reorganized by workflow: Sales & Income → Expenses & Payroll → Banking → Assets & Year-End → Review → Setup, with clearer icons. Reports styled as the standout destination. Report tabs regrouped: Statements (P&L, Balance Sheet) · Working papers (TB, GL, A/R) · CRA filings (HST, GIFI). Cosmetic only.'],
   ['2.4.6', '2026-07-17', 'Home Office: shareholder dropdown (synced with Company Settings) chooses whose home the expenses post under. Also fixed: posted entries now use real COA accounts (Rent, Utilities, Interest & Bank Charges, Repairs & Maintenance) — the old "Rent & Utilities" name was not in the chart of accounts and was mistyped as an asset on the Trial Balance.'],
   ['2.4.5', '2026-07-17', 'Shareholder dropdowns now sync with Company Settings: names defined in Settings → Shareholders appear in the expense editor (plus historical names on existing entries); new entries default to your first real shareholder instead of "Shareholder 1".'],
   ['2.4.4', '2026-07-17', 'Payroll: top toolbar now shows the right actions (Add Pay Run, PDOC link, Export). Previously it fell back to a generic "Add Entry" that created a bank transaction — misleading on the Payroll page.'],
