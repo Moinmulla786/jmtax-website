@@ -518,6 +518,17 @@ test('Home office posts to real COA expense accounts under the selected sharehol
           got:'n='+shEntries.length+' badCats='+(badCat.join(',')||'none')+' sh='+allSh+' diff='+d};
 `);
 
+test('Home office business % is capped at 100% (20 sq ft of a 10 sq ft home ≠ 200%)', `
+  __reset();
+  const helperOk = hoBizPct(10,20)===1 && hoBizPct(0,20)===0 && Math.abs(hoBizPct(1000,250)-0.25)<1e-9;
+  hoData={sqftTotal:10, sqftBiz:20, years:{'2026':{heat:[113,0,0,0,0,0,0,0,0,0,0,0]}}};
+  const capped  = getHoTotals();
+  hoData={sqftTotal:10, sqftBiz:10, years:{'2026':{heat:[113,0,0,0,0,0,0,0,0,0,0,0]}}};
+  const full100 = getHoTotals();
+  return {pass: helperOk && Math.abs(capped.biz-full100.biz)<0.01 && Math.abs(capped.hst-full100.hst)<0.01,
+          got:'helper='+helperOk+' capped.biz='+capped.biz+' (expect '+full100.biz+') hst='+capped.hst};
+`);
+
 /* ════════════ runner ════════════ */
 const iframe = document.getElementById('app');
 iframe.onload = () => setTimeout(run, 400);

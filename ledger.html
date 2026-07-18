@@ -1678,9 +1678,10 @@
 // Every export, backup, and save is stamped with both, so any file can be traced to
 // the exact software version that produced it.
 // ═══════════════════════════════════════════════════════════════
-const APP_VERSION  = '2.4.8';
+const APP_VERSION  = '2.4.9';
 const DATA_VERSION = 1;
 const APP_CHANGELOG = [
+  ['2.4.9', '2026-07-18', 'Home Office: business-use percentage is capped at 100% everywhere (worksheet, HST report, shareholder posting, exports) — business sq ft can no longer exceed the home\'s total sq ft; the worksheet shows a red warning when the inputs are impossible.'],
   ['2.4.8', '2026-07-17', 'Category dropdowns now show each account under its Chart-of-Accounts group (Revenue, Operating Expenses, Current Liabilities…), in statement order — transactions editor and filter, shareholder editor and filter, and invoice editor, matching the journal-entry editor.'],
   ['2.4.7', '2026-07-17', 'Navigation reorganized by workflow: Sales & Income → Expenses & Payroll → Banking → Assets & Year-End → Review → Setup, with clearer icons. Reports styled as the standout destination. Report tabs regrouped: Statements (P&L, Balance Sheet) · Working papers (TB, GL, A/R) · CRA filings (HST, GIFI). Cosmetic only.'],
   ['2.4.6', '2026-07-17', 'Home Office: shareholder dropdown (synced with Company Settings) chooses whose home the expenses post under. Also fixed: posted entries now use real COA accounts (Rent, Utilities, Interest & Bank Charges, Repairs & Maintenance) — the old "Rent & Utilities" name was not in the chart of accounts and was mistyped as an asset on the Trial Balance.'],
@@ -7359,10 +7360,18 @@ function hoLoadData() {
 }
 
 // Returns {hst, net, biz, total} for all years combined — used by HST Summary and reports
+// Business-use percentage, clamped to [0, 100%] — business sq ft can never exceed the home's
+// total sq ft. Every consumer (worksheet, HST model, posting, exports) uses THIS, so an input
+// slip like 20/10 can never inflate the claim to 200%.
+function hoBizPct(total, biz) {
+  const t = parseFloat(total)||0, b = parseFloat(biz)||0;
+  return t > 0 ? Math.min(b/t, 1) : 0;
+}
+
 function getHoTotals() {
   const sqftTotal = parseFloat(hoData.sqftTotal)||0;
   const sqftBiz   = parseFloat(hoData.sqftBiz)||0;
-  const pct = sqftTotal > 0 ? sqftBiz/sqftTotal : 0;
+  const pct = hoBizPct(sqftTotal, sqftBiz);
   let totalHst=0, totalNet=0, totalBiz=0, totalGross=0;
   Object.values(hoData.years||{}).forEach(yr => {
     HO_ROWS.forEach(row => {
@@ -7441,8 +7450,15 @@ function hoRecalc() {
   hoUpdateHeaderLabels();
   const total = parseFloat(document.getElementById('ho-total-sqft').value)||0;
   const biz   = parseFloat(document.getElementById('ho-biz-sqft').value)||0;
-  const pct   = total > 0 ? biz/total : 0;
-  document.getElementById('ho-pct-display').textContent = (pct*100).toFixed(1)+'%';
+  const pct   = hoBizPct(total, biz);
+  const over  = total > 0 && biz > total;
+  const pctEl = document.getElementById('ho-pct-display');
+  pctEl.innerHTML = over
+    ? `${(pct*100).toFixed(1)}% <span style="color:var(--danger);font-size:10px;font-weight:600">⚠ business sq ft exceeds total — capped at 100%</span>`
+    : (pct*100).toFixed(1)+'%';
+  pctEl.style.color = over ? 'var(--danger)' : 'var(--accent)';
+  const bizEl = document.getElementById('ho-biz-sqft');
+  if(bizEl) bizEl.style.borderColor = over ? 'var(--danger)' : '';
 
   hoData.sqftTotal = total;
   hoData.sqftBiz   = biz;
@@ -7554,7 +7570,7 @@ function hoPostToShareholder() {
   const yr   = hoCurrentYear();
   const total = parseFloat(document.getElementById('ho-total-sqft').value)||0;
   const biz   = parseFloat(document.getElementById('ho-biz-sqft').value)||0;
-  const pct   = total > 0 ? biz/total : 0;
+  const pct   = hoBizPct(total, biz);
   if(!pct) { toast('Set sq ft values first'); return; }
 
   hoEnsureYear(yr);
@@ -7604,7 +7620,7 @@ function hoExport() {
   const yr  = hoCurrentYear();
   const total = parseFloat(document.getElementById('ho-total-sqft').value)||0;
   const biz   = parseFloat(document.getElementById('ho-biz-sqft').value)||0;
-  const pct   = total>0 ? biz/total : 0;
+  const pct   = hoBizPct(total, biz);
   hoEnsureYear(yr);
 
   const rows = [
@@ -9646,7 +9662,7 @@ async function exportToExcel() {
     if(hoYears.length) {
       const hoExportRows = [
         [`${corp} — Home Office Expenses`, '', '', '', ''],
-        [`Sq Ft Total: ${hoData.sqftTotal||0}  |  Business: ${hoData.sqftBiz||0}  |  Business %: ${hoData.sqftTotal>0?((hoData.sqftBiz/hoData.sqftTotal)*100).toFixed(1)+'%':'—'}`, '', '', '', ''],
+        [`Sq Ft Total: ${hoData.sqftTotal||0}  |  Business: ${hoData.sqftBiz||0}  |  Business %: ${hoData.sqftTotal>0?(hoBizPct(hoData.sqftTotal,hoData.sqftBiz)*100).toFixed(1)+'%':'—'}`, '', '', '', ''],
         [''],
       ];
       HO_ROWS.forEach(row => {
