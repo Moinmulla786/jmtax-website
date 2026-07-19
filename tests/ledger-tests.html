@@ -429,14 +429,18 @@ test('Versioning: semver APP_VERSION, changelog entry, save() stamps schema + ap
 
 test('Duplicate account names are impossible: entry guard + defensive COA merge', `
   const cfgSnap = JSON.parse(JSON.stringify(companyConfig));
+  const realPrompt = window.prompt;
   try {
-    // (1) entry guard: renaming a custom ledger to an existing account name is rejected
-    companyConfig.customLedgers = [{id:'cl-t1', name:'My Custom Exp', type:'expense', group:'Operating Expenses'}];
+    // (1) entry guard: renaming a custom account to an existing name is rejected
+    companyConfig.accounts = [{id:'acct-t1', name:'My Custom Exp', type:'expense', group:'Operating Expenses', gifi:''}];
     refreshAccountSets();
-    cfgUpdateCustomLedger('cl-t1', 'name', 'Rent');           // clashes with built-in
-    const rejected = (companyConfig.customLedgers.find(l=>l.id==='cl-t1')||{}).name === 'My Custom Exp';
-    cfgUpdateCustomLedger('cl-t1', 'name', 'rent');           // case-insensitive clash
-    const rejectedCI = (companyConfig.customLedgers.find(l=>l.id==='cl-t1')||{}).name === 'My Custom Exp';
+    window.prompt = () => 'Rent';                              // clashes with built-in
+    coaRenameAccount('My Custom Exp');
+    const rejected = (companyConfig.accounts.find(a=>a.id==='acct-t1')||{}).name === 'My Custom Exp';
+    window.prompt = () => 'rent';                              // case-insensitive clash
+    coaRenameAccount('My Custom Exp');
+    const rejectedCI = (companyConfig.accounts.find(a=>a.id==='acct-t1')||{}).name === 'My Custom Exp';
+    window.prompt = realPrompt;
     // (2) defensive merge: even a sneaked-in duplicate cannot become a second account or
     // override the built-in's type
     companyConfig.customLedgers = [{id:'cl-t2', name:'Rent', type:'revenue', group:'Revenue'}];
@@ -446,7 +450,7 @@ test('Duplicate account names are impossible: entry guard + defensive COA merge'
     const single = getAllAccounts().filter(a=>a.name.toLowerCase()==='rent').length === 1;
     return {pass: rejected && rejectedCI && stillExpense && single,
             got:'guard='+rejected+' ci='+rejectedCI+' typeKept='+stillExpense+' single='+single};
-  } finally { companyConfig = cfgSnap; refreshAccountSets(); }
+  } finally { window.prompt = realPrompt; companyConfig = cfgSnap; refreshAccountSets(); }
 `);
 
 group('E. Payroll (clearing-account model — no bank double-count possible)');

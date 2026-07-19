@@ -1244,19 +1244,9 @@
             </div>
           </div>
 
-          <!-- Custom Ledgers (legacy — hidden but kept for backward compat) -->
-          <div class="card" style="margin-bottom:20px">
-            <div class="card-pad">
-              <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
-                <div>
-                  <div class="card-title" style="margin:0">Custom Ledgers / Accounts</div>
-                  <div style="font-size:11px;color:var(--text3);margin-top:2px">Add custom categories beyond the default CRA ledgers</div>
-                </div>
-                <button class="btn btn-sm" onclick="cfgAddCustomLedger()">+ Add Ledger</button>
-              </div>
-              <div id="cfg-custom-ledgers-list"></div>
-            </div>
-          </div>
+          <!-- Legacy "Custom Ledgers" card removed (v2.5.0) — the Chart of Accounts card above is
+               the one place to add accounts. Stored customLedgers data (if any ever exists) is
+               still read defensively by getEffectiveCOA/getAllAccounts. -->
 
           <!-- Prior Year Comparatives -->
           <div class="card" style="margin-bottom:20px">
@@ -1678,9 +1668,10 @@
 // Every export, backup, and save is stamped with both, so any file can be traced to
 // the exact software version that produced it.
 // ═══════════════════════════════════════════════════════════════
-const APP_VERSION  = '2.4.9';
+const APP_VERSION  = '2.5.0';
 const DATA_VERSION = 1;
 const APP_CHANGELOG = [
+  ['2.5.0', '2026-07-18', 'One chart of accounts: removed the legacy "Custom Ledgers / Accounts" section from Settings — the Chart of Accounts editor (Settings card or Setup tab, same list) is the single place to manage accounts, with GIFI codes, groups and duplicate protection. Old backups containing custom ledgers still restore and merge safely.'],
   ['2.4.9', '2026-07-18', 'Home Office: business-use percentage is capped at 100% everywhere (worksheet, HST report, shareholder posting, exports) — business sq ft can no longer exceed the home\'s total sq ft; the worksheet shows a red warning when the inputs are impossible.'],
   ['2.4.8', '2026-07-17', 'Category dropdowns now show each account under its Chart-of-Accounts group (Revenue, Operating Expenses, Current Liabilities…), in statement order — transactions editor and filter, shareholder editor and filter, and invoice editor, matching the journal-entry editor.'],
   ['2.4.7', '2026-07-17', 'Navigation reorganized by workflow: Sales & Income → Expenses & Payroll → Banking → Assets & Year-End → Review → Setup, with clearer icons. Reports styled as the standout destination. Report tabs regrouped: Statements (P&L, Balance Sheet) · Working papers (TB, GL, A/R) · CRA filings (HST, GIFI). Cosmetic only.'],
@@ -8383,7 +8374,6 @@ function cfgRender() {
   cfgUpdateApiKeyStatus();
   cfgUpdateFYLabel();
   cfgRenderShareholders();
-  cfgRenderCustomLedgers();
   const pyLbl = document.getElementById('cfg-py-label');
   if(pyLbl) pyLbl.value = c.priorYearLabel||'';
   cfgRenderPriorYear();
@@ -8636,78 +8626,10 @@ function cfgDeleteShareholder(id) {
   cfgSave();
 }
 
-// ——— Custom Ledgers ———
-function cfgRenderCustomLedgers() {
-  const list = document.getElementById('cfg-custom-ledgers-list');
-  if(!list) return;
-  const ledgers = companyConfig.customLedgers||[];
-  if(!ledgers.length) {
-    list.innerHTML = '<p style="font-size:12px;color:var(--text3);padding:4px 0">No custom ledgers added. Default CRA ledgers are always available.</p>';
-    return;
-  }
-  list.innerHTML = ledgers.map((l,i) => `
-    <div style="display:grid;grid-template-columns:1fr 140px 180px 36px;gap:8px;margin-bottom:8px;align-items:end">
-      <div>
-        ${i===0?'<div class="edit-label">Ledger Name</div>':''}
-        <input class="edit-input" value="${esc(l.name)}" placeholder="e.g. Vehicle Expenses"
-          oninput="cfgUpdateCustomLedger('${l.id}','name',this.value)" style="font-size:12px;width:100%">
-      </div>
-      <div>
-        ${i===0?'<div class="edit-label">Type</div>':''}
-        <select class="edit-input" onchange="cfgUpdateCustomLedger('${l.id}','type',this.value)" style="font-size:12px;width:100%">
-          <option value="expense"${l.type==='expense'?' selected':''}>Expense</option>
-          <option value="revenue"${l.type==='revenue'?' selected':''}>Revenue / Income</option>
-          <option value="asset"${l.type==='asset'?' selected':''}>Asset</option>
-          <option value="liability"${l.type==='liability'?' selected':''}>Liability</option>
-          <option value="equity"${l.type==='equity'?' selected':''}>Equity</option>
-        </select>
-      </div>
-      <div>
-        ${i===0?'<div class="edit-label">Report Group</div>':''}
-        <input class="edit-input" value="${l.group||''}" placeholder="e.g. Operating Expenses"
-          oninput="cfgUpdateCustomLedger('${l.id}','group',this.value)" style="font-size:12px;width:100%">
-      </div>
-      <div style="display:flex;align-items:${i===0?'flex-end':'center'};padding-bottom:${i===0?'2px':'0'}">
-        <button onclick="cfgDeleteCustomLedger('${l.id}')"
-          style="background:none;border:none;cursor:pointer;color:var(--text3);font-size:18px;padding:0;line-height:1">×</button>
-      </div>
-    </div>`).join('');
-}
-
-function cfgAddCustomLedger() {
-  if(!companyConfig.customLedgers) companyConfig.customLedgers=[];
-  companyConfig.customLedgers.push({
-    id: `cl-${Date.now()}`, name: '', type: 'expense', group: 'Operating Expenses'
-  });
-  cfgRenderCustomLedgers();
-  cfgSyncCategories();
-}
-
-function cfgUpdateCustomLedger(id, field, value) {
-  // No duplicate account names from ANY path: reject a name that matches an existing
-  // account (case-insensitive), except this ledger's own current name.
-  if(field === 'name') {
-    const nn = String(value||'').trim();
-    const self = (companyConfig.customLedgers||[]).find(l=>l.id===id);
-    const selfName = (self?.name||'').toLowerCase();
-    if(nn && getAllAccounts().some(a => a.name.toLowerCase()===nn.toLowerCase() && a.name.toLowerCase()!==selfName)) {
-      toast(`⚠ "${nn}" already exists — choose a different account name`);
-      cfgRenderCustomLedgers();   // reset the input to the stored value
-      return;
-    }
-  }
-  companyConfig.customLedgers = (companyConfig.customLedgers||[]).map(l =>
-    l.id===id ? {...l, [field]:value} : l);
-  cfgSyncCategories();
-  cfgSave();
-}
-
-function cfgDeleteCustomLedger(id) {
-  companyConfig.customLedgers = (companyConfig.customLedgers||[]).filter(l=>l.id!==id);
-  cfgRenderCustomLedgers();
-  cfgSyncCategories();
-  cfgSave();
-}
+// ——— Custom Ledgers (legacy) ———
+// The Custom Ledgers UI was removed in v2.5.0 — the Chart of Accounts editor is the one
+// place to manage accounts. Stored customLedgers data (if any) is still merged read-only
+// by getEffectiveCOA()/getAllAccounts() so old backups restore safely.
 
 // Keep the live CATEGORIES array in sync with custom ledgers
 function cfgSyncCategories() {
