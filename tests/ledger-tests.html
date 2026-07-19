@@ -554,6 +554,30 @@ test('AI review payload: complete, truncated, and never leaks the API key', `
   }
 `);
 
+test('HST not-applicable toggle: no-HST defaults + report notice; registered restores normal', `
+  __reset();
+  companyConfig = {...companyConfig, hstApplicable: false};
+  const helperOk = hstApplicable() === false;
+  shEntries = [];
+  addShEntry();
+  const noHstDefault = shEntries[0].hstType === 'none';
+  shEditingId = null;
+  renderHST();
+  const notice = document.getElementById('hst-table').textContent.includes('not applicable');
+
+  companyConfig = {...companyConfig, hstApplicable: true};
+  shEntries = [];
+  addShEntry();
+  const inclusiveDefault = shEntries[0].hstType === 'inclusive';
+  shEditingId = null;
+  const tog = document.getElementById('hst-method-toggle');
+  if(tog){ tog.value='traditional'; tog.dataset.initialized='1'; }
+  renderHST();
+  const normalReport = !document.getElementById('hst-table').textContent.includes('not applicable');
+  return {pass: helperOk && noHstDefault && notice && inclusiveDefault && normalReport,
+          got:'helper='+helperOk+' shOff='+noHstDefault+' notice='+notice+' shOn='+inclusiveDefault+' normal='+normalReport};
+`);
+
 /* ════════════ runner ════════════ */
 const iframe = document.getElementById('app');
 iframe.onload = () => setTimeout(run, 400);

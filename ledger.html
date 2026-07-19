@@ -1110,7 +1110,15 @@
           <!-- HST Settings -->
           <div class="card" style="margin-bottom:20px">
             <div class="card-pad">
-              <div class="card-title">HST / GST Filing Method</div>
+              <div class="card-title">HST / GST</div>
+              <div style="margin-bottom:14px;max-width:380px">
+                <div class="edit-label">HST / GST Registration</div>
+                <select class="edit-input" id="cfg-hst-applicable" style="width:100%;font-size:13px" onchange="cfgSave();cfgUpdateHstApplicable()">
+                  <option value="yes">Registered — HST applicable</option>
+                  <option value="no">Not registered (small supplier) — HST not applicable</option>
+                </select>
+              </div>
+              <div id="cfg-hst-method-area">
               <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:16px;margin-bottom:12px">
                 <div>
                   <div class="edit-label">Filing Method</div>
@@ -1139,6 +1147,7 @@
                 </div>
               </div>
               <div id="cfg-hst-method-info" style="font-size:11px;color:var(--text2);background:var(--surface2);border-radius:var(--radius);padding:10px 12px"></div>
+              </div><!-- /cfg-hst-method-area -->
             </div>
           </div>
 
@@ -1670,9 +1679,10 @@
 // Every export, backup, and save is stamped with both, so any file can be traced to
 // the exact software version that produced it.
 // ═══════════════════════════════════════════════════════════════
-const APP_VERSION  = '2.6.1';
+const APP_VERSION  = '2.6.2';
 const DATA_VERSION = 1;
 const APP_CHANGELOG = [
+  ['2.6.2', '2026-07-18', 'HST / GST registration toggle in Settings: mark a company as not registered (small supplier) — filing-method options hide, new entries default to no HST, and the HST report shows a "not applicable" notice with the $30,000 registration threshold reminder.'],
   ['2.6.1', '2026-07-18', 'AI plumbing consolidated into one aiFetch() gateway (proxy-ready for future client access via a firm-controlled endpoint with per-client codes and spend caps). Shareholder AI categorize gains proper error handling. Client-friendly message when no AI key is set: the rest of the app works fully without AI.'],
   ['2.6.0', '2026-07-18', 'AI Review: one click on the Reports tab sends the same figures shown on screen (TB, P&L, BS, HST, control results, largest transactions) to Claude and returns a CPA-style review — anomalies, HST reasonableness, control commentary, and before-filing action items. Advisory only: the AI never changes the books. Uses your API key from Settings.'],
   ['2.5.0', '2026-07-18', 'One chart of accounts: removed the legacy "Custom Ledgers / Accounts" section from Settings — the Chart of Accounts editor (Settings card or Setup tab, same list) is the single place to manage accounts, with GIFI codes, groups and duplicate protection. Old backups containing custom ledgers still restore and merge safely.'],
@@ -3758,6 +3768,15 @@ function defaultHstRate() {
   return 5;                                                                  // BC/AB/SK/MB/QC + territories: GST only here
 }
 
+// Is this company registered for HST/GST? Small suppliers (under $30k) may not be —
+// when not applicable, new entries default to no HST and the HST report shows a notice.
+function hstApplicable() { return companyConfig.hstApplicable !== false; }
+
+function cfgUpdateHstApplicable() {
+  const area = document.getElementById('cfg-hst-method-area');
+  if(area) area.style.display = (document.getElementById('cfg-hst-applicable')?.value === 'no') ? 'none' : '';
+}
+
 function recalcHst(id) {
   // Read live values straight from the DOM — don't rely on transactions state
   // because the user may still be editing
@@ -4671,6 +4690,23 @@ function computeHST() {
 
 function renderHST() {
   document.getElementById('hst-period').innerHTML = cfgReportHeader('HST / GST Summary') + '<span style="font-size:11px;color:var(--text3)">' + periodLabel() + '</span>';
+
+  // Not registered for HST/GST → no return to prepare; show a notice instead of the summary
+  if(!hstApplicable()) {
+    const ajeWrap = document.getElementById('hst-quick-aje-wrap');
+    if(ajeWrap) ajeWrap.style.display = 'none';
+    document.getElementById('hst-table').innerHTML = `
+      <tr><td colspan="2" style="padding:16px 4px;font-size:12px;color:var(--text2)">
+        <strong>HST / GST not applicable</strong> — this company is set as <em>not registered</em>
+        (small supplier) in Company Settings. No HST is collected, no ITCs are claimed, and no
+        HST return is prepared.<br><br>
+        <span style="color:var(--text3)">If the company registers (required once taxable supplies
+        exceed $30,000 over four consecutive quarters), switch this in Settings → HST / GST.</span>
+      </td></tr>`;
+    const detail = document.getElementById('hst-detail');
+    if(detail) detail.innerHTML = '';
+    return;
+  }
 
   // Read method from dropdown (user can override settings default)
   const toggle = document.getElementById('hst-method-toggle');
@@ -6124,6 +6160,7 @@ let companyConfig = {
   accountantName: '', accountantEmail: '',
   customLedgers: [],   // legacy — kept for backward compat on restore
   accounts: [],        // [{id, name, type, group}] — client-specific accounts
+  hstApplicable: true,
   hstMethod: 'traditional',
   hstQuickRate: '8.8',
   hstQuickRate2: '8.8',
@@ -6156,7 +6193,7 @@ function addShEntry() {
     amount: 0,
     hstAmount: 0,
     hstRate: defaultHstRate(),
-    hstType: 'inclusive',   // shareholder expenses are usually entered gross (HST included → 13/113 backed out)
+    hstType: hstApplicable() ? 'inclusive' : 'none',   // gross entry with HST backed out — unless not registered
     notes: '',
     status: 'pending',   // pending | reimbursed
     reimbursedDate: ''
@@ -8129,6 +8166,7 @@ function blankConfig() {
     fyStart:'', fyEnd:'', taxYear:'',
     shareholders:[], accountantName:'', accountantEmail:'',
     customLedgers:[], accounts:[],
+    hstApplicable: true,
     hstMethod:'traditional', hstQuickRate:'8.8', hstQuickRate2:'8.8',
     priorYearLabel:'', priorYearPL:{}, priorYearBS:{},
   };
@@ -8445,6 +8483,9 @@ function cfgRender() {
   // HST method
   const methodEl = document.getElementById('cfg-hst-method');
   if(methodEl) methodEl.value = c.hstMethod||'traditional';
+  const applEl = document.getElementById('cfg-hst-applicable');
+  if(applEl) applEl.value = c.hstApplicable === false ? 'no' : 'yes';
+  cfgUpdateHstApplicable();
   const qr1El = document.getElementById('cfg-hst-quick-rate');
   if(qr1El) qr1El.value = c.hstQuickRate||'8.8';
   const qr2El = document.getElementById('cfg-hst-quick-rate2');
@@ -8596,6 +8637,7 @@ function cfgSave() {
     taxYear:         document.getElementById('cfg-tax-year')?.value||'',
     accountantName:  document.getElementById('cfg-accountant-name')?.value||'',
     accountantEmail: document.getElementById('cfg-accountant-email')?.value||'',
+    hstApplicable:   (document.getElementById('cfg-hst-applicable')?.value||'yes') !== 'no',
     hstMethod:       document.getElementById('cfg-hst-method')?.value||'traditional',
     hstQuickRate:    document.getElementById('cfg-hst-quick-rate')?.value||'8.8',
     hstQuickRate2:   document.getElementById('cfg-hst-quick-rate2')?.value||'8.8',
