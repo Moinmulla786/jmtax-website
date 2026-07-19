@@ -1670,9 +1670,10 @@
 // Every export, backup, and save is stamped with both, so any file can be traced to
 // the exact software version that produced it.
 // ═══════════════════════════════════════════════════════════════
-const APP_VERSION  = '2.6.0';
+const APP_VERSION  = '2.6.1';
 const DATA_VERSION = 1;
 const APP_CHANGELOG = [
+  ['2.6.1', '2026-07-18', 'AI plumbing consolidated into one aiFetch() gateway (proxy-ready for future client access via a firm-controlled endpoint with per-client codes and spend caps). Shareholder AI categorize gains proper error handling. Client-friendly message when no AI key is set: the rest of the app works fully without AI.'],
   ['2.6.0', '2026-07-18', 'AI Review: one click on the Reports tab sends the same figures shown on screen (TB, P&L, BS, HST, control results, largest transactions) to Claude and returns a CPA-style review — anomalies, HST reasonableness, control commentary, and before-filing action items. Advisory only: the AI never changes the books. Uses your API key from Settings.'],
   ['2.5.0', '2026-07-18', 'One chart of accounts: removed the legacy "Custom Ledgers / Accounts" section from Settings — the Chart of Accounts editor (Settings card or Setup tab, same list) is the single place to manage accounts, with GIFI codes, groups and duplicate protection. Old backups containing custom ledgers still restore and merge safely.'],
   ['2.4.9', '2026-07-18', 'Home Office: business-use percentage is capped at 100% everywhere (worksheet, HST report, shareholder posting, exports) — business sq ft can no longer exceed the home\'s total sq ft; the worksheet shows a red warning when the inputs are impossible.'],
@@ -2962,6 +2963,30 @@ function ruleBasedCategorize(description) {
 }
 
 // ——— AI Categorize ———
+// ═══ THE one door to the AI API — every AI feature (Categorize, Shareholder Categorize,
+// AI Review) calls this. FUTURE (client distribution): to give clients AI without handing out
+// API keys, deploy a small proxy (e.g. Cloudflare Worker) that holds the firm's key server-side
+// with per-client access codes and spend caps — then change ONLY this function to point at it.
+async function aiFetch(prompt, {model='claude-sonnet-5', maxTokens=1500} = {}) {
+  const res = await fetch('https://api.anthropic.com/v1/messages', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'x-api-key': getApiKey(),
+      'anthropic-version': '2023-06-01',
+      'anthropic-dangerous-direct-browser-access': 'true'
+    },
+    body: JSON.stringify({ model, max_tokens: maxTokens, messages: [{role:'user', content: prompt}] })
+  });
+  if(!res.ok) {
+    const errBody = await res.text().catch(()=>'');
+    throw new Error(`HTTP ${res.status}${errBody ? ': ' + errBody.slice(0,120) : ''}`);
+  }
+  const data = await res.json();
+  if(data.error) throw new Error(data.error.message || JSON.stringify(data.error));
+  return (data.content||[]).map(c => c.text||'').join('');
+}
+
 async function aiCategorize() {
   const uncat = transactions.filter(t => t.category === 'Uncategorized');
   if(!uncat.length) { toast('All transactions are already categorized.'); return; }
@@ -3010,30 +3035,7 @@ async function aiCategorize() {
 Return ONLY a JSON array like [{"id":"...","category":"..."}]. No markdown, no explanation.
 Transactions: ${JSON.stringify(items)}`;
 
-      const res = await fetch('https://api.anthropic.com/v1/messages', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-api-key': getApiKey(),
-          'anthropic-version': '2023-06-01',
-          'anthropic-dangerous-direct-browser-access': 'true'
-        },
-        body: JSON.stringify({
-          model: 'claude-sonnet-4-20250514',
-          max_tokens: 2048,
-          messages: [{ role: 'user', content: prompt }]
-        })
-      });
-
-      if(!res.ok) {
-        const errBody = await res.text().catch(()=>'');
-        throw new Error(`HTTP ${res.status}${errBody ? ': ' + errBody.slice(0,120) : ''}`);
-      }
-
-      const data = await res.json();
-      if(data.error) throw new Error(data.error.message || JSON.stringify(data.error));
-
-      const txt = (data.content||[]).map(c => c.text||'').join('');
+      const txt = await aiFetch(prompt, { model: 'claude-sonnet-4-20250514', maxTokens: 2048 });
       const clean = txt.replace(/```json\s*/gi,'').replace(/```\s*/gi,'').trim();
       const results = JSON.parse(clean);
       const map = {};
@@ -3182,8 +3184,13 @@ function showApiKeyPrompt() {
         style="background:none;border:none;cursor:pointer;font-size:18px;color:var(--text3);padding:0 0 0 8px">×</button>
     </div>
     <p style="color:var(--text2);margin-bottom:10px">
-      Add your Anthropic API key to enable AI categorization.
-      Get a free key at <a href="https://console.anthropic.com/settings/keys" target="_blank" style="color:var(--accent)">console.anthropic.com</a>.
+      AI features (categorization, review) are normally run by your accountant —
+      <strong>everything else in the app works fully without them.</strong>
+    </p>
+    <p style="color:var(--text2);margin-bottom:10px">
+      If J&amp;M Tax has issued you an AI access key, enter it in Company Settings.
+      (Advanced: you can also use your own Anthropic key from
+      <a href="https://console.anthropic.com/settings/keys" target="_blank" rel="noopener" style="color:var(--accent)">console.anthropic.com</a>.)
     </p>
     <button class="btn btn-primary btn-sm" onclick="showView('settings');document.getElementById('api-key-prompt').remove()">
       → Open Company Settings
@@ -4494,27 +4501,7 @@ Do not invent numbers; only reference figures present in the data. This is advis
 BOOKS:
 ${JSON.stringify(payload)}`;
 
-    const res = await fetch('https://api.anthropic.com/v1/messages', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-api-key': getApiKey(),
-        'anthropic-version': '2023-06-01',
-        'anthropic-dangerous-direct-browser-access': 'true'
-      },
-      body: JSON.stringify({
-        model: 'claude-sonnet-5',
-        max_tokens: 1500,
-        messages: [{ role: 'user', content: prompt }]
-      })
-    });
-    if(!res.ok) {
-      const errBody = await res.text().catch(()=>'');
-      throw new Error(`HTTP ${res.status}${errBody ? ': ' + errBody.slice(0,120) : ''}`);
-    }
-    const data = await res.json();
-    if(data.error) throw new Error(data.error.message || JSON.stringify(data.error));
-    const txt = (data.content||[]).map(c=>c.text||'').join('').trim();
+    const txt = (await aiFetch(prompt, { model: 'claude-sonnet-5', maxTokens: 1500 })).trim();
 
     // Render: escape everything, then apply light formatting (headings + bullets)
     const html = esc(txt)
@@ -6441,21 +6428,10 @@ async function aiCategorizeSh() {
   setLoading(`AI categorizing ${stillUncat.length} entries…`);
   try {
     const items = stillUncat.slice(0,40).map(e=>({id:e.id,description:e.description,amount:e.amount}));
-    const res = await fetch('https://api.anthropic.com/v1/messages',{
-      method:'POST',
-      headers:{
-        'Content-Type':'application/json',
-        'x-api-key': getApiKey(),
-        'anthropic-version': '2023-06-01',
-        'anthropic-dangerous-direct-browser-access':'true'
-      },
-      body:JSON.stringify({model:'claude-sonnet-4-20250514',max_tokens:1024,
-        messages:[{role:'user',content:`Categorize each into one of: ${CATEGORIES.join(', ')}.
+    const raw = await aiFetch(`Categorize each into one of: ${CATEGORIES.join(', ')}.
 Return ONLY JSON array [{"id":"...","category":"..."}]. No markdown.
-Transactions: ${JSON.stringify(items)}`}]})
-    });
-    const data = await res.json();
-    const txt = (data.content||[]).map(c=>c.text||'').join('').replace(/```json|```/g,'').trim();
+Transactions: ${JSON.stringify(items)}`, { model:'claude-sonnet-4-20250514', maxTokens:1024 });
+    const txt = raw.replace(/```json|```/g,'').trim();
     const results = JSON.parse(txt);
     const map={};
     results.forEach(r=>{if(r.id&&r.category)map[r.id]=r.category;});
