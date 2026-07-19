@@ -533,6 +533,27 @@ test('Home office business % is capped at 100% (20 sq ft of a 10 sq ft home ≠ 
           got:'helper='+helperOk+' capped.biz='+capped.biz+' (expect '+full100.biz+') hst='+capped.hst};
 `);
 
+test('AI review payload: complete, truncated, and never leaks the API key', `
+  __reset();
+  const realKey = localStorage.getItem('ledger_api_key');
+  try {
+    localStorage.setItem('ledger_api_key', 'sk-test-SECRET-9876');
+    transactions=[{id:'t1',date:'2026-01-05',amount:1130,account:'Chequing',category:'Sales Revenue',hstAmount:130,
+                   description:'X'.repeat(200)}];
+    const p = buildAiReviewPayload();
+    const json = JSON.stringify(p);
+    const shapeOk = Array.isArray(p.trialBalance) && p.profitAndLoss && p.balanceSheet && p.hst
+                 && Array.isArray(p.controls) && Array.isArray(p.largestTransactions) && p.counts;
+    const truncOk = p.largestTransactions[0].desc.length <= 60;
+    const noKey = !json.includes('SECRET-9876');
+    const numbersOk = Math.abs(p.profitAndLoss.income-1000)<0.01 && Math.abs(p.hst.collected-130)<0.01;
+    return {pass: shapeOk && truncOk && noKey && numbersOk,
+            got:'shape='+shapeOk+' trunc='+truncOk+' noKey='+noKey+' income='+p.profitAndLoss.income};
+  } finally {
+    if(realKey===null) localStorage.removeItem('ledger_api_key'); else localStorage.setItem('ledger_api_key', realKey);
+  }
+`);
+
 /* ════════════ runner ════════════ */
 const iframe = document.getElementById('app');
 iframe.onload = () => setTimeout(run, 400);

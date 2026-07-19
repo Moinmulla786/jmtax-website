@@ -1461,11 +1461,13 @@
             <button class="btn btn-sm" onclick="fieldCodeLookup()">Look up</button>
           </div>
           <div style="display:flex;gap:8px">
+            <button class="btn btn-ai" onclick="aiReviewBooks()">✦ AI Review</button>
             <button class="btn" onclick="exportReportsJSON()">{ } Download JSON Data</button>
             <button class="btn btn-primary" onclick="exportReportsPDF()">⎙ Download PDF Statements</button>
           </div>
         </div>
         <div id="fcode-result" style="font-size:12px;margin:-4px 0 10px;color:var(--text2)"></div>
+        <div id="ai-review-result"></div>
         <!-- Report tabs -->
         <div style="display:flex;gap:4px;margin-bottom:20px;background:var(--surface2);padding:4px;border-radius:var(--radius);width:fit-content;flex-wrap:wrap">
           <span class="rtab-group">Statements</span>
@@ -1668,9 +1670,10 @@
 // Every export, backup, and save is stamped with both, so any file can be traced to
 // the exact software version that produced it.
 // ═══════════════════════════════════════════════════════════════
-const APP_VERSION  = '2.5.0';
+const APP_VERSION  = '2.6.0';
 const DATA_VERSION = 1;
 const APP_CHANGELOG = [
+  ['2.6.0', '2026-07-18', 'AI Review: one click on the Reports tab sends the same figures shown on screen (TB, P&L, BS, HST, control results, largest transactions) to Claude and returns a CPA-style review — anomalies, HST reasonableness, control commentary, and before-filing action items. Advisory only: the AI never changes the books. Uses your API key from Settings.'],
   ['2.5.0', '2026-07-18', 'One chart of accounts: removed the legacy "Custom Ledgers / Accounts" section from Settings — the Chart of Accounts editor (Settings card or Setup tab, same list) is the single place to manage accounts, with GIFI codes, groups and duplicate protection. Old backups containing custom ledgers still restore and merge safely.'],
   ['2.4.9', '2026-07-18', 'Home Office: business-use percentage is capped at 100% everywhere (worksheet, HST report, shareholder posting, exports) — business sq ft can no longer exceed the home\'s total sq ft; the worksheet shows a red warning when the inputs are impossible.'],
   ['2.4.8', '2026-07-17', 'Category dropdowns now show each account under its Chart-of-Accounts group (Revenue, Operating Expenses, Current Liabilities…), in statement order — transactions editor and filter, shareholder editor and filter, and invoice editor, matching the journal-entry editor.'],
@@ -4438,6 +4441,106 @@ function exportReportsJSON() {
   a.download = `${(companyConfig.corpName||'ledger').replace(/[^a-z0-9]/gi,'_')}_reports_${new Date().toISOString().slice(0,10)}.json`;
   a.click();
   toast('✓ Report data exported as JSON — identical figures to the on-screen reports');
+}
+
+// ═══ AI REVIEW — a second pair of eyes over the books. ADVISORY ONLY: the AI never posts,
+// changes, or deletes anything; it reads the same report models the screen renders and
+// returns observations for the accountant to act on.
+function buildAiReviewPayload() {
+  const pl = computePL(), bs = computeBS(), hst = computeHST();
+  const full = buildFullLedger();
+  const tb = Object.entries(full)
+    .map(([name,a])=>({name, type:a.type, dr:+a.clDr.toFixed(2), cr:+a.clCr.toFixed(2)}))
+    .filter(a=>a.dr>0.005||a.cr>0.005);
+  const largestTransactions = [...transactions]
+    .sort((a,b)=>Math.abs(parseFloat(b.amount)||0)-Math.abs(parseFloat(a.amount)||0)).slice(0,40)
+    .map(t=>({date:t.date, desc:String(t.description||'').slice(0,60), cat:t.category,
+              amt:+(parseFloat(t.amount)||0).toFixed(2), hst:+(parseFloat(t.hstAmount)||0).toFixed(2)}));
+  return {
+    period: periodLabel(),
+    appVersion: APP_VERSION,
+    counts: { transactions: transactions.length, invoices: invoices.length,
+              shareholderEntries: shEntries.length, payRuns: payRuns.length, fixedAssets: fixedAssets.length },
+    controls: runControlChecks(),
+    trialBalance: tb,
+    profitAndLoss: { income:+pl.income.toFixed(2), totalOpExpenses:+pl.totalOpExpenses.toFixed(2),
+                     netProfit:+pl.netProfit.toFixed(2), byCategory: pl.bycat, shareholderByCategory: pl.shBycat,
+                     ccaByClass: pl.ccaByClass, uncategorizedCount: pl.uncatCount, formulas: pl.formulas },
+    balanceSheet: { totalAssets:+bs.totalAssets.toFixed(2), totalLiabilities:+bs.totalLiabilities.toFixed(2),
+                    totalEquity:+bs.totalEquity.toFixed(2), formulas: bs.formulas },
+    hst: { collected:+hst.hstCollected.toFixed(2), itc:+hst.hstPaidTotal.toFixed(2), net:+hst.netHst.toFixed(2) },
+    largestTransactions
+  };
+}
+
+async function aiReviewBooks() {
+  const out = document.getElementById('ai-review-result');
+  if(!getApiKey()) { showApiKeyPrompt(); return; }
+  if(!transactions.length && !invoices.length) { toast('Nothing to review yet — import or add some records first.'); return; }
+  if(out) out.innerHTML = `<div class="card" style="margin-bottom:14px"><div class="card-pad" style="font-size:12px;color:var(--text2)">✦ Reviewing your books… (10–20 seconds)</div></div>`;
+  try {
+    const payload = buildAiReviewPayload();
+    const prompt = `You are a Canadian CPA reviewing a small corporation's bookkeeping before filing. Below are the books as JSON (trial balance, P&L, balance sheet, HST, internal-control results, largest transactions).
+
+Write a concise professional review (under 400 words), plain text with "-" bullets under these headings exactly:
+OVERALL — one-paragraph health check citing net profit and balance position.
+ANOMALIES — suspicious balances, likely misclassifications, unusual ratios; cite account names and amounts. Say "None noted" if clean.
+HST — reasonableness of HST collected vs ITCs for the revenue/expense mix.
+CONTROLS & TIE-OUTS — comment on any failed control checks; if all passed, one line.
+BEFORE FILING — 3-5 specific action items for this file.
+
+Do not invent numbers; only reference figures present in the data. This is advisory — do not instruct changes to be made automatically.
+
+BOOKS:
+${JSON.stringify(payload)}`;
+
+    const res = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': getApiKey(),
+        'anthropic-version': '2023-06-01',
+        'anthropic-dangerous-direct-browser-access': 'true'
+      },
+      body: JSON.stringify({
+        model: 'claude-sonnet-5',
+        max_tokens: 1500,
+        messages: [{ role: 'user', content: prompt }]
+      })
+    });
+    if(!res.ok) {
+      const errBody = await res.text().catch(()=>'');
+      throw new Error(`HTTP ${res.status}${errBody ? ': ' + errBody.slice(0,120) : ''}`);
+    }
+    const data = await res.json();
+    if(data.error) throw new Error(data.error.message || JSON.stringify(data.error));
+    const txt = (data.content||[]).map(c=>c.text||'').join('').trim();
+
+    // Render: escape everything, then apply light formatting (headings + bullets)
+    const html = esc(txt)
+      .replace(/^(OVERALL|ANOMALIES|HST|CONTROLS &amp; TIE-OUTS|BEFORE FILING)\s*—?\s*$/gm,
+               '<div style="font-weight:600;color:var(--heading);margin:10px 0 3px;font-size:12px;letter-spacing:.04em">$1</div>')
+      .replace(/^- (.*)$/gm, '<div style="padding-left:14px;text-indent:-10px;margin:2px 0">• $1</div>')
+      .replace(/\n\n/g, '<br>').replace(/\n/g, ' ');
+    if(out) out.innerHTML = `
+      <div class="card" style="margin-bottom:14px;border-left:3px solid var(--primary);border-radius:0 var(--radius-lg) var(--radius-lg) 0">
+        <div class="card-pad">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+            <div style="font-weight:600;font-size:13px;color:var(--heading)">✦ AI Review</div>
+            <button class="btn btn-sm" onclick="document.getElementById('ai-review-result').innerHTML=''">✕ Dismiss</button>
+          </div>
+          <div style="font-size:12px;line-height:1.7;color:var(--text)">${html}</div>
+          <div style="margin-top:10px;font-size:10px;color:var(--text3)">
+            Advisory only — nothing in your books was changed. Generated ${new Date().toLocaleString('en-CA')} from the same figures shown on screen. Verify before acting.
+          </div>
+        </div>
+      </div>`;
+    toast('✓ AI review complete');
+  } catch(err) {
+    console.error('AI review failed:', err);
+    if(out) out.innerHTML = '';
+    toast('❌ AI review failed — ' + (String(err.message||err).includes('401') ? 'check your API key in Settings' : String(err.message||err).slice(0,80)));
+  }
 }
 
 function renderReports() {
