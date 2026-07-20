@@ -589,12 +589,12 @@ test('Sign-in gate: validates + normalizes email, once per browser, never blocks
     document.getElementById('signin-email').value = 'bad-email';
     submitSignin();
     const rejected = !!document.getElementById('signin-gate') && !localStorage.getItem(SIGNIN_CONFIG.storageKey);
-    document.getElementById('signin-email').value = '  Person@Example.COM ';
+    document.getElementById('signin-email').value = '  Person@Realbiz.COM ';   // example.com is now blocked as a placeholder
     submitSignin();
     const stored = localStorage.getItem(SIGNIN_CONFIG.storageKey);
     const gateGone = !document.getElementById('signin-gate');
     document.getElementById('signin-gate')?.remove();
-    return {pass: requiredWhenNew && rejected && stored==='person@example.com' && gateGone,
+    return {pass: requiredWhenNew && rejected && stored==='person@realbiz.com' && gateGone,
             got:'iframeSkip='+requiredWhenNew+' rejected='+rejected+' stored='+stored+' dismissed='+gateGone};
   } finally {
     if(saved===null) localStorage.removeItem(SIGNIN_CONFIG.storageKey); else localStorage.setItem(SIGNIN_CONFIG.storageKey, saved);
@@ -621,6 +621,28 @@ test('Control catches any future P&L vs Balance Sheet divergence', `
   transactions=[{id:'t1',date:'2026-01-05',amount:1130,account:'Chequing',category:'Sales Revenue',hstAmount:130}];
   const clean = runControlChecks().some(i=>/does not agree with the Balance Sheet/.test(i.msg));
   return {pass: clean === false, got: clean ? 'false positive on clean books' : 'no false positive'};
+`);
+
+test('Email quality checks: block junk, suggest typos, never block real business addresses', `
+  const bad = [];
+  // must PASS — real people and real small-business addresses
+  ['moin@gmail.com','jainuddin.mulla@jandmtaxaccounting.com','admin@acmecorp.ca',
+   'info@shop.ca','user@realbusiness.com','a.b@sub.domain.co.uk','bob+tag@outlook.com']
+    .forEach(e => { if(!validateSigninEmail(e).ok) bad.push('WRONGLY BLOCKED: '+e); });
+  // must FAIL — malformed
+  ['','john@','john.doe','a@b..com','@gmail.com','x y@gmail.com']
+    .forEach(e => { if(validateSigninEmail(e).ok) bad.push('SHOULD REJECT (format): '+e); });
+  // must FAIL — disposable / placeholder / fake
+  ['x@mailinator.com','y@10minutemail.com','z@yopmail.com','a@test.com','b@example.com',
+   'test@realco.com','asdf@realco.com','aaa@realco.com','dummy1@realco.com','q@realco.com']
+    .forEach(e => { if(validateSigninEmail(e).ok) bad.push('SHOULD REJECT (junk): '+e); });
+  // typo → suggestion, not silent acceptance
+  const typo = validateSigninEmail('moin@gmial.com');
+  if(typo.ok || typo.suggestion !== 'moin@gmail.com') bad.push('typo suggestion failed: '+JSON.stringify(typo));
+  // normalization still applies
+  const norm = validateSigninEmail('  Moin.Mulla@GMAIL.com ');
+  if(!norm.ok || norm.email !== 'moin.mulla@gmail.com') bad.push('normalization failed: '+JSON.stringify(norm));
+  return {pass: bad.length===0, got: bad.length ? bad.slice(0,3).join(' | ') : 'all 25 cases correct'};
 `);
 
 /* ════════════ runner ════════════ */

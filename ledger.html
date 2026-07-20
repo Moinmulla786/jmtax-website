@@ -1679,9 +1679,10 @@
 // Every export, backup, and save is stamped with both, so any file can be traced to
 // the exact software version that produced it.
 // ═══════════════════════════════════════════════════════════════
-const APP_VERSION  = '2.7.2';
+const APP_VERSION  = '2.7.3';
 const DATA_VERSION = 1;
 const APP_CHANGELOG = [
+  ['2.7.3', '2026-07-19', 'Sign-in email quality checks, so the signup list stays usable: malformed addresses are rejected; ~30 disposable/temporary inbox services and placeholder domains (test.com, example.com) are blocked; obvious junk names (test@, asdf@, aaa@) are refused; and common domain typos offer a one-click fix ("Did you mean moin@gmail.com?"). Legitimate business addresses such as admin@ and info@ are always accepted. Note: this filters quality only — true ownership verification requires emailing a confirmation code, which needs a server.'],
   ['2.7.2', '2026-07-19', 'Sign-in gate is now live: signups are delivered to the firm\'s Formspree inbox (subject "J&M Ledger signup: <email>", reply-to set to the signup address, product-updates consent flagged). Delivery is fire-and-forget — a network or service failure never blocks access to the tool.'],
   ['2.7.1', '2026-07-19', 'Bug fix: an account with a contra balance (e.g. a journal entry crediting an expense) vanished from the P&L even though it was in the Trial Balance, and the P&L stopped agreeing with the Balance Sheet. Contra amounts now show as negatives on the P&L, and a new internal control flags any future P&L vs Balance Sheet divergence. Journal Entries table no longer repeats the account in both the Debit and Credit columns.'],
   ['2.7.0', '2026-07-18', 'Email sign-in gate: visitors enter an email once per browser before using the tool, with an optional product-updates consent box, so the firm builds a user list. Submissions post to a configurable endpoint (SIGNIN_CONFIG.endpoint — set up a free Formspree form); access is never blocked by a network failure.'],
@@ -1717,6 +1718,59 @@ const SIGNIN_CONFIG = {
   endpoint: 'https://formspree.io/f/mkodbgll',   // J&M Ledger Signups (Formspree)
   storageKey: 'ledger_signin_email'              // global (per browser), not per client
 };
+
+// ── Email quality checks ──────────────────────────────────────────────
+// NOTE: this is quality filtering, NOT verification. Truly proving someone owns an address
+// requires emailing them a code, which needs a server — that arrives with the hosted version.
+// These rules block the junk that actually turns up: throwaway inboxes, placeholders, typos.
+const DISPOSABLE_EMAIL_DOMAINS = new Set([
+  'mailinator.com','tempmail.com','temp-mail.org','guerrillamail.com','10minutemail.com',
+  'yopmail.com','throwawaymail.com','fakeinbox.com','trashmail.com','trashmail.de','sharklasers.com',
+  'getnada.com','dispostable.com','maildrop.cc','mintemail.com','tempinbox.com','spamgourmet.com',
+  'mailnesia.com','tempmailo.com','emailondeck.com','burnermail.io','moakt.com','inboxkitten.com',
+  'mailsac.com','discard.email','spam4.me','grr.la','mytemp.email','tmpmail.org'
+]);
+const PLACEHOLDER_EMAIL_DOMAINS = new Set([
+  'test.com','test.ca','example.com','example.org','example.net','domain.com','email.com',
+  'abc.com','asdf.com','sample.com','fake.com','none.com','xyz.com','aaa.com'
+]);
+const COMMON_DOMAIN_TYPOS = {
+  'gmial.com':'gmail.com','gmai.com':'gmail.com','gmail.co':'gmail.com','gmaill.com':'gmail.com',
+  'gmail.con':'gmail.com','gmail.cm':'gmail.com','gnail.com':'gmail.com','gamil.com':'gmail.com',
+  'gmail.om':'gmail.com','hotmial.com':'hotmail.com','hotmai.com':'hotmail.com','hotmail.con':'hotmail.com',
+  'hotmail.co':'hotmail.com','yaho.com':'yahoo.com','yahooo.com':'yahoo.com','yahoo.con':'yahoo.com',
+  'yhaoo.com':'yahoo.com','yahoo.co':'yahoo.com','outlok.com':'outlook.com','outloo.com':'outlook.com',
+  'outlook.con':'outlook.com','outlook.co':'outlook.com','iclod.com':'icloud.com','icloud.con':'icloud.com',
+  'rogers.co':'rogers.com','sympatico.c':'sympatico.ca','shaw.c':'shaw.ca','bell.ne':'bell.net'
+};
+
+function validateSigninEmail(raw) {
+  const email = String(raw||'').trim().toLowerCase();
+  if(!email) return { ok:false, error:'Please enter your email address.' };
+  const m = email.match(/^([^\s@]+)@([^\s@]+\.[a-z]{2,})$/);
+  if(!m || email.includes('..')) return { ok:false, error:'That doesn\'t look like a valid email address.' };
+  const local = m[1], domain = m[2];
+  if(local.startsWith('.') || local.endsWith('.'))
+    return { ok:false, error:'That doesn\'t look like a valid email address.' };
+  if(COMMON_DOMAIN_TYPOS[domain])
+    return { ok:false, error:'Did you mean:', suggestion: local + '@' + COMMON_DOMAIN_TYPOS[domain] };
+  if(DISPOSABLE_EMAIL_DOMAINS.has(domain))
+    return { ok:false, error:'Please use a permanent email address — temporary inboxes aren\'t accepted.' };
+  if(PLACEHOLDER_EMAIL_DOMAINS.has(domain))
+    return { ok:false, error:'Please enter your real email address.' };
+  if(local.length < 2 || /^(.)\1+$/.test(local)
+     // NB: admin@ / info@ / user@ are legitimate small-business addresses — never block those.
+     || /^(test|tests|testing|asdf|qwerty|abc|xyz|dummy|fake|noone|nobody|none|null|nil|na)\d*$/.test(local))
+    return { ok:false, error:'Please enter your real email address.' };
+  return { ok:true, email };
+}
+
+function applySigninSuggestion(fixed) {
+  const inp = document.getElementById('signin-email');
+  if(inp) { inp.value = fixed; inp.focus(); }
+  const err = document.getElementById('signin-error');
+  if(err) err.innerHTML = '';
+}
 
 function signinRequired() {
   if(window.self !== window.top) return false;            // embedded (e.g. test runner) — skip
@@ -1760,11 +1814,17 @@ function showSigninGate() {
 function submitSignin() {
   const inp = document.getElementById('signin-email');
   const err = document.getElementById('signin-error');
-  const email = (inp?.value||'').trim().toLowerCase();
-  if(!/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email)) {
-    if(err) err.textContent = 'Please enter a valid email address.';
+  const check = validateSigninEmail(inp?.value);
+  if(!check.ok) {
+    if(err) {
+      err.innerHTML = check.suggestion
+        ? `${esc(check.error)} <a href="#" onclick="applySigninSuggestion('${esc(check.suggestion)}');return false" style="color:var(--primary);font-weight:600">${esc(check.suggestion)}</a>?`
+        : esc(check.error);
+    }
+    inp?.focus();
     return;
   }
+  const email = check.email;
   localStorage.setItem(SIGNIN_CONFIG.storageKey, email);
   const consent = !!document.getElementById('signin-consent')?.checked;
   // Best-effort delivery — access is never blocked by a network failure
