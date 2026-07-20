@@ -1679,9 +1679,10 @@
 // Every export, backup, and save is stamped with both, so any file can be traced to
 // the exact software version that produced it.
 // ═══════════════════════════════════════════════════════════════
-const APP_VERSION  = '2.7.1';
+const APP_VERSION  = '2.7.2';
 const DATA_VERSION = 1;
 const APP_CHANGELOG = [
+  ['2.7.2', '2026-07-19', 'Sign-in gate is now live: signups are delivered to the firm\'s Formspree inbox (subject "J&M Ledger signup: <email>", reply-to set to the signup address, product-updates consent flagged). Delivery is fire-and-forget — a network or service failure never blocks access to the tool.'],
   ['2.7.1', '2026-07-19', 'Bug fix: an account with a contra balance (e.g. a journal entry crediting an expense) vanished from the P&L even though it was in the Trial Balance, and the P&L stopped agreeing with the Balance Sheet. Contra amounts now show as negatives on the P&L, and a new internal control flags any future P&L vs Balance Sheet divergence. Journal Entries table no longer repeats the account in both the Debit and Credit columns.'],
   ['2.7.0', '2026-07-18', 'Email sign-in gate: visitors enter an email once per browser before using the tool, with an optional product-updates consent box, so the firm builds a user list. Submissions post to a configurable endpoint (SIGNIN_CONFIG.endpoint — set up a free Formspree form); access is never blocked by a network failure.'],
   ['2.6.2', '2026-07-18', 'HST / GST registration toggle in Settings: mark a company as not registered (small supplier) — filing-method options hide, new entries default to no HST, and the HST report shows a "not applicable" notice with the $30,000 registration threshold reminder.'],
@@ -1713,8 +1714,8 @@ const APP_CHANGELOG = [
 // name it "JM Ledger Signups", copy its endpoint (looks like https://formspree.io/f/abcd1234)
 // and paste it here. Submissions arrive by email + are exportable as CSV from the dashboard.
 const SIGNIN_CONFIG = {
-  endpoint: '',                      // ← paste Formspree endpoint here to activate delivery
-  storageKey: 'ledger_signin_email'  // global (per browser), not per client
+  endpoint: 'https://formspree.io/f/mkodbgll',   // J&M Ledger Signups (Formspree)
+  storageKey: 'ledger_signin_email'              // global (per browser), not per client
 };
 
 function signinRequired() {
@@ -1772,9 +1773,15 @@ function submitSignin() {
       fetch(SIGNIN_CONFIG.endpoint, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
-        body: JSON.stringify({ email, updatesConsent: consent, appVersion: APP_VERSION,
-                               signedUpAt: new Date().toISOString(), page: location.hostname })
-      }).catch(()=>{});
+        body: JSON.stringify({
+          email,                                   // Formspree uses this as reply-to
+          _subject: `J&M Ledger signup: ${email}`, // subject line in your inbox
+          updatesConsent: consent ? 'YES — send product updates' : 'no',
+          appVersion: APP_VERSION,
+          signedUpAt: new Date().toISOString(),
+          site: location.hostname || 'local file'
+        })
+      }).catch(()=>{});   // never block access on a network/service failure
     } catch(_) {}
   }
   document.getElementById('signin-gate')?.remove();
