@@ -578,6 +578,30 @@ test('HST not-applicable toggle: no-HST defaults + report notice; registered res
           got:'helper='+helperOk+' shOff='+noHstDefault+' notice='+notice+' shOn='+inclusiveDefault+' normal='+normalReport};
 `);
 
+test('Sign-in gate: validates + normalizes email, once per browser, never blocks the app', `
+  const saved = localStorage.getItem(SIGNIN_CONFIG.storageKey);
+  try {
+    localStorage.removeItem(SIGNIN_CONFIG.storageKey);
+    const requiredWhenNew = signinRequired() === false;   // iframe → self-disables, app never blocked
+    // exercise the submit logic directly (gate DOM is not rendered inside the runner)
+    document.body.insertAdjacentHTML('beforeend',
+      '<div id="signin-gate"><input id="signin-email"><div id="signin-error"></div><input type="checkbox" id="signin-consent"></div>');
+    document.getElementById('signin-email').value = 'bad-email';
+    submitSignin();
+    const rejected = !!document.getElementById('signin-gate') && !localStorage.getItem(SIGNIN_CONFIG.storageKey);
+    document.getElementById('signin-email').value = '  Person@Example.COM ';
+    submitSignin();
+    const stored = localStorage.getItem(SIGNIN_CONFIG.storageKey);
+    const gateGone = !document.getElementById('signin-gate');
+    document.getElementById('signin-gate')?.remove();
+    return {pass: requiredWhenNew && rejected && stored==='person@example.com' && gateGone,
+            got:'iframeSkip='+requiredWhenNew+' rejected='+rejected+' stored='+stored+' dismissed='+gateGone};
+  } finally {
+    if(saved===null) localStorage.removeItem(SIGNIN_CONFIG.storageKey); else localStorage.setItem(SIGNIN_CONFIG.storageKey, saved);
+    document.getElementById('signin-gate')?.remove();
+  }
+`);
+
 /* ════════════ runner ════════════ */
 const iframe = document.getElementById('app');
 iframe.onload = () => setTimeout(run, 400);

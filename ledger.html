@@ -1679,9 +1679,10 @@
 // Every export, backup, and save is stamped with both, so any file can be traced to
 // the exact software version that produced it.
 // ═══════════════════════════════════════════════════════════════
-const APP_VERSION  = '2.6.2';
+const APP_VERSION  = '2.7.0';
 const DATA_VERSION = 1;
 const APP_CHANGELOG = [
+  ['2.7.0', '2026-07-18', 'Email sign-in gate: visitors enter an email once per browser before using the tool, with an optional product-updates consent box, so the firm builds a user list. Submissions post to a configurable endpoint (SIGNIN_CONFIG.endpoint — set up a free Formspree form); access is never blocked by a network failure.'],
   ['2.6.2', '2026-07-18', 'HST / GST registration toggle in Settings: mark a company as not registered (small supplier) — filing-method options hide, new entries default to no HST, and the HST report shows a "not applicable" notice with the $30,000 registration threshold reminder.'],
   ['2.6.1', '2026-07-18', 'AI plumbing consolidated into one aiFetch() gateway (proxy-ready for future client access via a firm-controlled endpoint with per-client codes and spend caps). Shareholder AI categorize gains proper error handling. Client-friendly message when no AI key is set: the rest of the app works fully without AI.'],
   ['2.6.0', '2026-07-18', 'AI Review: one click on the Reports tab sends the same figures shown on screen (TB, P&L, BS, HST, control results, largest transactions) to Claude and returns a CPA-style review — anomalies, HST reasonableness, control commentary, and before-filing action items. Advisory only: the AI never changes the books. Uses your API key from Settings.'],
@@ -1703,6 +1704,81 @@ const APP_CHANGELOG = [
   ['2.0.0', '2026-07-14', 'Robustness release: regression test suite (35 tests); one shared computation per report so screen = Excel = JSON = PDF; internal control checks on every Reports view; ƒ calculation formulas on every total; TaxCycle-style field codes with lookup; fixed invoice/HST/GL/home-office double-counts, invoice deletion cleanup, import dedup and status parsing.'],
   ['1.x',   '2025–2026', 'Original release: transactions, imports (CSV/XLSX/PDF/paste), invoices & A/R, shareholder loan, home office, fixed assets/CCA, AJE, HST, GIFI, multi-client, backups.'],
 ];
+
+// ═══ SIGN-IN GATE (lead capture) ═══
+// Visitors enter an email once per browser before using the tool; submissions are sent to the
+// endpoint below so the firm builds its user list. Access is NEVER blocked by network failure.
+// SETUP (one time): create a free form at https://formspree.io (sign in with the firm Gmail),
+// name it "JM Ledger Signups", copy its endpoint (looks like https://formspree.io/f/abcd1234)
+// and paste it here. Submissions arrive by email + are exportable as CSV from the dashboard.
+const SIGNIN_CONFIG = {
+  endpoint: '',                      // ← paste Formspree endpoint here to activate delivery
+  storageKey: 'ledger_signin_email'  // global (per browser), not per client
+};
+
+function signinRequired() {
+  if(window.self !== window.top) return false;            // embedded (e.g. test runner) — skip
+  return !localStorage.getItem(SIGNIN_CONFIG.storageKey);
+}
+
+function showSigninGate() {
+  if(!signinRequired()) return;
+  const el = document.createElement('div');
+  el.id = 'signin-gate';
+  el.style.cssText = 'position:fixed;inset:0;z-index:1000;background:rgba(13,30,50,0.55);display:flex;align-items:center;justify-content:center;padding:20px';
+  el.innerHTML = `
+    <div style="background:var(--surface);border-radius:var(--radius-lg);box-shadow:var(--shadow-lg);max-width:420px;width:100%;padding:28px 30px">
+      <div style="display:flex;align-items:center;gap:11px;margin-bottom:14px">
+        <span style="width:40px;height:40px;display:flex;align-items:center;justify-content:center;background:linear-gradient(135deg,#2f8fdd,var(--primary-deep));color:#fff;font-family:var(--display);font-weight:700;font-size:17px;border-radius:10px">JM</span>
+        <div>
+          <div style="font-family:var(--display);font-weight:600;font-size:17px;color:var(--heading)">J &amp; M Ledger</div>
+          <div style="font-size:10px;color:var(--primary);letter-spacing:.08em;text-transform:uppercase">Bookkeeping for Canadian small business</div>
+        </div>
+      </div>
+      <p style="font-size:12.5px;color:var(--text2);margin-bottom:14px;line-height:1.6">
+        Enter your email to start using the tool — free, runs entirely in your browser, your data stays on your device.
+      </p>
+      <input id="signin-email" type="email" placeholder="you@company.com" autocomplete="email"
+        style="width:100%;padding:10px 12px;border:1px solid var(--border2);border-radius:var(--radius);font-size:13px;font-family:var(--sans);margin-bottom:8px"
+        onkeydown="if(event.key==='Enter')submitSignin()">
+      <div id="signin-error" style="font-size:11px;color:var(--danger);margin-bottom:8px;min-height:14px"></div>
+      <label style="display:flex;gap:8px;align-items:flex-start;font-size:11px;color:var(--text2);margin-bottom:14px;cursor:pointer">
+        <input type="checkbox" id="signin-consent" style="margin-top:2px">
+        <span>Send me occasional product updates from J &amp; M Tax Accounting. No spam — unsubscribe anytime.</span>
+      </label>
+      <button class="btn btn-primary" style="width:100%;justify-content:center;padding:11px" onclick="submitSignin()">Start using J &amp; M Ledger →</button>
+      <p style="font-size:10px;color:var(--text3);margin-top:10px;text-align:center">
+        Your email is used to grant access${'' /* + product updates only with consent */} · <a href="index.html" style="color:var(--text3)">jandmtaxaccounting.com</a>
+      </p>
+    </div>`;
+  document.body.appendChild(el);
+  setTimeout(()=>document.getElementById('signin-email')?.focus(), 100);
+}
+
+function submitSignin() {
+  const inp = document.getElementById('signin-email');
+  const err = document.getElementById('signin-error');
+  const email = (inp?.value||'').trim().toLowerCase();
+  if(!/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email)) {
+    if(err) err.textContent = 'Please enter a valid email address.';
+    return;
+  }
+  localStorage.setItem(SIGNIN_CONFIG.storageKey, email);
+  const consent = !!document.getElementById('signin-consent')?.checked;
+  // Best-effort delivery — access is never blocked by a network failure
+  if(SIGNIN_CONFIG.endpoint) {
+    try {
+      fetch(SIGNIN_CONFIG.endpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+        body: JSON.stringify({ email, updatesConsent: consent, appVersion: APP_VERSION,
+                               signedUpAt: new Date().toISOString(), page: location.hostname })
+      }).catch(()=>{});
+    } catch(_) {}
+  }
+  document.getElementById('signin-gate')?.remove();
+  try { toast('Welcome! You\'re all set — your books stay on this device.'); } catch(_) {}
+}
 
 // Data migrations — one step per DATA_VERSION bump. Runs automatically on load.
 function migrateData(fromVersion) {
@@ -10148,6 +10224,7 @@ txRenderOpeningBalances();
 renderAll();
 cfgUpdateBrand();
 renderClientSwitcher();
+showSigninGate();      // email capture before first use (once per browser)
 maybeShowWelcome();
 </script>
 
