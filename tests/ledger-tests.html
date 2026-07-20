@@ -602,6 +602,27 @@ test('Sign-in gate: validates + normalizes email, once per browser, never blocks
   }
 `);
 
+test('Contra balances: an AJE crediting an expense still shows on the P&L and ties to the BS', `
+  __reset();
+  // DR Rent 10 / CR Meals & Entertainment 10 — Meals ends with a net CREDIT balance
+  adjustingEntries=[{id:'j1',date:'2026-07-19',reference:'AJE-001',type:'Accrual',
+    lines:[{account:'Rent',debit:10,credit:0},{account:'Meals & Entertainment',debit:0,credit:10}]}];
+  const pl = computePL(), bs = computeBS();
+  const shown  = Math.abs((pl.bycat['Meals & Entertainment'] ?? 0) + 10) < 0.01;   // present as -10
+  const agree  = Math.abs(pl.netProfit - bs.netProfit) < 0.01;                      // both 0
+  const totals = Math.abs(pl.totalOpExpenses) < 0.01;                               // +10 and -10 net to 0
+  const noCtl  = !runControlChecks().some(i=>/does not agree with the Balance Sheet/.test(i.msg));
+  return {pass: shown && agree && totals && noCtl,
+          got:'meals='+(pl.bycat['Meals & Entertainment'] ?? 'MISSING')+' pl='+pl.netProfit+' bs='+bs.netProfit+' opex='+pl.totalOpExpenses};
+`);
+
+test('Control catches any future P&L vs Balance Sheet divergence', `
+  __reset();
+  transactions=[{id:'t1',date:'2026-01-05',amount:1130,account:'Chequing',category:'Sales Revenue',hstAmount:130}];
+  const clean = runControlChecks().some(i=>/does not agree with the Balance Sheet/.test(i.msg));
+  return {pass: clean === false, got: clean ? 'false positive on clean books' : 'no false positive'};
+`);
+
 /* ════════════ runner ════════════ */
 const iframe = document.getElementById('app');
 iframe.onload = () => setTimeout(run, 400);

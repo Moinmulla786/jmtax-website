@@ -1679,9 +1679,10 @@
 // Every export, backup, and save is stamped with both, so any file can be traced to
 // the exact software version that produced it.
 // ═══════════════════════════════════════════════════════════════
-const APP_VERSION  = '2.7.0';
+const APP_VERSION  = '2.7.1';
 const DATA_VERSION = 1;
 const APP_CHANGELOG = [
+  ['2.7.1', '2026-07-19', 'Bug fix: an account with a contra balance (e.g. a journal entry crediting an expense) vanished from the P&L even though it was in the Trial Balance, and the P&L stopped agreeing with the Balance Sheet. Contra amounts now show as negatives on the P&L, and a new internal control flags any future P&L vs Balance Sheet divergence. Journal Entries table no longer repeats the account in both the Debit and Credit columns.'],
   ['2.7.0', '2026-07-18', 'Email sign-in gate: visitors enter an email once per browser before using the tool, with an optional product-updates consent box, so the firm builds a user list. Submissions post to a configurable endpoint (SIGNIN_CONFIG.endpoint — set up a free Formspree form); access is never blocked by a network failure.'],
   ['2.6.2', '2026-07-18', 'HST / GST registration toggle in Settings: mark a company as not registered (small supplier) — filing-method options hide, new entries default to no HST, and the HST report shows a "not applicable" notice with the $30,000 registration threshold reminder.'],
   ['2.6.1', '2026-07-18', 'AI plumbing consolidated into one aiFetch() gateway (proxy-ready for future client access via a firm-controlled endpoint with per-client codes and spend caps). Shareholder AI categorize gains proper error handling. Client-friendly message when no AI key is set: the rest of the app works fully without AI.'],
@@ -4439,6 +4440,12 @@ function runControlChecks() {
     if(Math.abs(bs.totalAssets - bs.totalLiabEquity) > 0.02)
       push('error', `Balance Sheet does not balance: assets ${fmt(bs.totalAssets)} vs liabilities+equity ${fmt(bs.totalLiabEquity)}`);
 
+    // 2b. P&L must tie to the Balance Sheet — both derive net profit from the same ledger, so any
+    //     difference means a figure is being dropped or double-counted on one of them.
+    const plM = computePL();
+    if(Math.abs(plM.netProfit - bs.netProfit) > 0.02)
+      push('error', `Profit & Loss net profit ${fmt(plM.netProfit)} does not agree with the Balance Sheet ${fmt(bs.netProfit)} — a figure is being dropped or counted twice`);
+
     // 3. GL ties to Trial Balance — every account's GL closing must equal its TB closing.
     //    (The GL and the ledger are built by separate code paths; this catches any future drift.)
     const gl = buildGLAccounts();
@@ -5633,7 +5640,10 @@ function computePL() {
     if(a.type !== 'revenue') return;
     const net = a.clCr - a.clDr; // credit-normal
     if(name === 'Uncategorized Income') { uncatIncAmt += net; return; }
-    if(net > 0.005) revBycat[name] = net;
+    // Keep contra balances (a revenue account with a net DEBIT, e.g. from an adjusting entry):
+    // dropping them would make the figure vanish from the P&L while it still sits in the Trial
+    // Balance, and the P&L would stop tying to the Balance Sheet.
+    if(Math.abs(net) > 0.005) revBycat[name] = net;
   });
 
   // Also include invoice revenue not yet in transactions (AR-based)
@@ -5652,7 +5662,9 @@ function computePL() {
 
   // ——— COGS ———
   const cogs = (full['Cost of Goods Sold']?.clDr||0) - (full['Cost of Goods Sold']?.clCr||0);
-  const grossProfit = income - Math.max(0,cogs);
+  // Use COGS as it actually stands — a net credit (rebate/reversal) must reduce cost, not be
+  // silently floored to zero, or gross profit stops tying to the ledger.
+  const grossProfit = income - cogs;
 
   // ——— Expenses from ledger (expense-type accounts only) ———
   const bycat = {};
@@ -5665,7 +5677,9 @@ function computePL() {
     if(name.startsWith('Depreciation')) return; // handled via CCA section
     if(name === 'Corporate Tax Expense') { corpTaxExpense += a.clDr - a.clCr; return; } // shown separately below
     const net = (a.clDr - a.clCr);
-    if(net > 0.005) bycat[name] = net;
+    // Keep contra balances (an expense account with a net CREDIT, e.g. a refund, rebate or an
+    // adjusting entry crediting the expense) — see the revenue note above.
+    if(Math.abs(net) > 0.005) bycat[name] = net;
   });
   // ——— Shareholder-paid expenses ———
   // Already merged into the ledger (and therefore into `bycat`) by getShLedgerEntries() as
@@ -5682,7 +5696,9 @@ function computePL() {
   Object.entries(shBycat).forEach(([cat, amt]) => {
     if(bycat[cat] !== undefined) {
       bycat[cat] -= amt;
-      if(bycat[cat] <= 0.005) delete bycat[cat];
+      // Only drop a line that nets to zero — a negative remainder is real and must be kept,
+      // otherwise total expenses would be overstated by the clipped amount.
+      if(Math.abs(bycat[cat]) <= 0.005) delete bycat[cat];
     }
   });
   const opExpenses = Object.values(bycat).reduce((s,v)=>s+v,0);
@@ -5701,7 +5717,7 @@ function computePL() {
     }
   });
 
-  const totalOpExpenses = opExpenses + shTotal + totalCCA + (uncatExpAmt.total > 0 ? uncatExpAmt.total : 0);
+  const totalOpExpenses = opExpenses + shTotal + totalCCA + uncatExpAmt.total;
   const netBeforeTax = grossProfit - totalOpExpenses;
   const netProfit = netBeforeTax - corpTaxExpense; // after corporate income tax
   const uncatCount = transactions.filter(t=>t.category==='Uncategorized').length;
@@ -5794,7 +5810,7 @@ function renderPL() {
   const pyTotalRev = Object.entries(py).filter(([k])=>INCOME_CATS.has(k)||(getEffectiveCOA()[k]?.type==='revenue')).reduce((s,[,v])=>s+v,0);
   rows.push(tr('rt-subtotal','Total Revenue',income,false,true,'',pyTotalRev||undefined));
   rows.push(tr('rt-spacer','',''));
-  if(cogs>0) {
+  if(Math.abs(cogs)>0.005) {
     rows.push(tr('rt-section','Cost of Sales',''));
     rows.push(tr('rt-item','Cost of Goods Sold',cogs,true,false,'',py['Cost of Goods Sold'],'Cost of Goods Sold'));
     rows.push(tr('rt-subtotal','Gross Profit',grossProfit,false,true,'',pyTotalRev-(py['Cost of Goods Sold']||0)||undefined));
@@ -5803,7 +5819,7 @@ function renderPL() {
   rows.push(tr('rt-section','Operating Expenses (Company-Paid)',''));
   Object.entries(bycat).sort((a,b)=>b[1]-a[1]).forEach(([cat,amt])=>rows.push(tr('rt-item',cat,amt,true,false,'',py[cat],cat)));
   if(!Object.keys(bycat).length) rows.push(tr('rt-item','No categorized company expenses',null,true));
-  if(uncatExpAmt.total > 0) rows.push(tr('rt-item','⚠ Uncategorized Expenses',uncatExpAmt.total,true,false,'var(--warning)'));
+  if(Math.abs(uncatExpAmt.total) > 0.005) rows.push(tr('rt-item','⚠ Uncategorized Expenses',uncatExpAmt.total,true,false,'var(--warning)'));
   const pyOpExp = Object.entries(py).filter(([k])=>EXPENSE_CATS.has(k)||(getEffectiveCOA()[k]?.type==='expense')).reduce((s,[,v])=>s+v,0);
   rows.push(tr('rt-subtotal','Subtotal Company Expenses',opExpenses + uncatExpAmt.total,false,false,'',pyOpExp||undefined));
 
@@ -8955,9 +8971,9 @@ function renderAJE() {
           </td>
           <td rowspan="${e.lines.length}" style="vertical-align:top;padding:8px"><span class="badge badge-ok" style="font-size:10px">${e.type||'Other'}</span></td>
         ` : ''}
-        <td style="padding:6px 8px;text-align:right;font-size:12px;color:var(--text2)">${esc(l.account)}</td>
+        <td style="padding:6px 8px;text-align:right;font-size:12px;color:var(--text2)">${(parseFloat(l.debit)||0)>0?esc(l.account):''}</td>
         <td style="padding:6px 8px;text-align:right;font-family:var(--mono);font-size:12px;color:var(--accent)">${(parseFloat(l.debit)||0)>0?fmt(parseFloat(l.debit)):'—'}</td>
-        <td style="padding:6px 8px;text-align:right;font-size:12px;color:var(--text2)">${esc(l.account)}</td>
+        <td style="padding:6px 8px;text-align:right;font-size:12px;color:var(--text2)">${(parseFloat(l.credit)||0)>0?esc(l.account):''}</td>
         <td style="padding:6px 8px;text-align:right;font-family:var(--mono);font-size:12px;color:var(--danger)">${(parseFloat(l.credit)||0)>0?fmt(parseFloat(l.credit)):'—'}</td>
         ${li===0 ? `<td rowspan="${e.lines.length}" style="vertical-align:top;padding:8px;white-space:nowrap">
           <button class="btn btn-sm" onclick="event.stopPropagation();ajeStartEdit('${e.id}')" style="padding:2px 8px;font-size:11px">Edit</button>
