@@ -8354,6 +8354,7 @@ function startNewClient() {
   if(!name?.trim()) return;
   // Save current client first
   save();
+  flushFileMirror(); // outgoing client's final state → its data file before we switch away
   // Create new client
   const id = 'client_' + Date.now();
   const clients = getClients();
@@ -8368,6 +8369,7 @@ function startNewClient() {
   showView('dashboard');
   renderAll();
   renderClientSwitcher();
+  updateDataFileUI('off'); // fresh company starts unconnected — clear the old client's label
   toast(`✓ New client "${name.trim()}" created — now active`);
 }
 
@@ -8404,6 +8406,7 @@ function deleteClient(id) {
     load();
     refreshAccountSets();
     renderAll();
+    initDataFile(); // async: pick up the surviving client's data file, if one is connected
   }
   renderClientSwitcher();
   toast(`Client "${c?.name}" deleted`);
