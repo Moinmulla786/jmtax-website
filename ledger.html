@@ -512,6 +512,18 @@
   </div>
 </div>
 
+<!-- Data-file prompt: shown on open when books aren't connected to a file (or need a reconnect click) -->
+<div id="datafile-modal" style="display:none;position:fixed;inset:0;background:rgba(26,25,23,0.55);z-index:8890;align-items:center;justify-content:center">
+  <div style="background:var(--surface);border-radius:var(--radius-lg);box-shadow:var(--shadow-lg);max-width:460px;width:90%;padding:32px;font-family:var(--mono);text-align:center">
+    <div id="datafile-modal-title" style="font-family:var(--display);font-size:24px;color:var(--text);margin-bottom:8px">Save your books to a file?</div>
+    <div id="datafile-modal-body" style="font-size:13px;color:var(--text2);line-height:1.6;margin-bottom:24px;text-align:left"></div>
+    <div style="display:flex;flex-direction:column;gap:10px">
+      <button id="datafile-modal-go" onclick="dataFileModalGo()" style="background:var(--accent);border:none;border-radius:var(--radius);cursor:pointer;font-size:14px;color:#fff;padding:12px;font-family:var(--mono)">◈ Connect a data file</button>
+      <button onclick="dataFileModalLater()" style="background:none;border:none;cursor:pointer;font-size:13px;color:var(--text3);font-family:var(--mono)">Later — keep books in the browser only</button>
+    </div>
+  </div>
+</div>
+
 <div id="loading-overlay">
   <div class="spinner"></div>
   <div class="loading-msg" id="loading-msg">Processing…</div>
@@ -642,6 +654,7 @@
 
       <!-- DASHBOARD -->
       <div id="view-dashboard" class="view active">
+        <div id="datafile-banner"></div>
         <div id="backup-banner"></div>
         <div class="metrics" id="metrics-grid"></div>
         <div id="ai-banner"></div>
@@ -8708,6 +8721,7 @@ async function dataFileClick() {
     const id = getActiveClientId();
     try { await _fsDel(id); } catch(_) {}
     _fileHandle = null;
+    try { localStorage.setItem(ck('ledger_datafile_later'), '1'); } catch(_) {} // an explicit disconnect means "stop suggesting"
     updateDataFileUI('off');
     toast('Data file disconnected — books remain in this browser');
   }
@@ -8742,16 +8756,24 @@ async function checkDataFileNewer() {
   } catch(_) { /* unreadable file: leave browser copy authoritative */ }
 }
 
-async function initDataFile() {
+async function initDataFile(promptOnOpen) {
   if(!FILE_SYNC_SUPPORTED) { updateDataFileUI('unsupported'); return; }
   _fileHandle = null;
   const id = getActiveClientId();
   if(!id) { updateDataFileUI('off'); return; }
   try { _fileHandle = await _fsGet(id); } catch(_) {}
-  if(!_fileHandle) { updateDataFileUI('off'); return; }
+  if(!_fileHandle) {
+    updateDataFileUI('off');
+    if(promptOnOpen) maybeShowDataFilePrompt('off');
+    return;
+  }
   let perm = 'prompt';
   try { perm = await _fileHandle.queryPermission({mode:'readwrite'}); } catch(_) {}
-  if(perm !== 'granted') { updateDataFileUI('reconnect'); return; }
+  if(perm !== 'granted') {
+    updateDataFileUI('reconnect');
+    if(promptOnOpen) maybeShowDataFilePrompt('reconnect');
+    return;
+  }
   updateDataFileUI('on');
   await checkDataFileNewer();
 }
@@ -8759,14 +8781,90 @@ async function initDataFile() {
 function updateDataFileUI(state) {
   const btn = document.getElementById('datafile-btn');
   const lbl = document.getElementById('datafile-label');
-  if(!btn || !lbl) return;
-  const name = _fileHandle?.name ? ` (${_fileHandle.name})` : '';
-  if(state === 'unsupported') { lbl.textContent = 'Data File — needs Chrome/Edge'; btn.style.opacity = '.55'; return; }
-  btn.style.opacity = '';
-  if(state === 'on')             { lbl.textContent = `Data File ✓${name}`; }
-  else if(state === 'reconnect') { lbl.textContent = 'Data File ⚠ click to reconnect'; }
-  else if(state === 'error')     { lbl.textContent = 'Data File ⚠ write failed'; }
-  else                           { lbl.textContent = 'Data File — connect'; }
+  if(btn && lbl) {
+    const name = _fileHandle?.name ? ` (${_fileHandle.name})` : '';
+    if(state === 'unsupported') { lbl.textContent = 'Data File — needs Chrome/Edge'; btn.style.opacity = '.55'; }
+    else {
+      btn.style.opacity = '';
+      if(state === 'on')             { lbl.textContent = `Data File ✓${name}`; }
+      else if(state === 'reconnect') { lbl.textContent = 'Data File ⚠ click to reconnect'; }
+      else if(state === 'error')     { lbl.textContent = 'Data File ⚠ write failed'; }
+      else                           { lbl.textContent = 'Data File — connect'; }
+    }
+  }
+  // Dashboard banner — the prominent surface for connect / reconnect / write-failure
+  const b = document.getElementById('datafile-banner');
+  if(!b) return;
+  if(state === 'on' || state === 'unsupported') { b.innerHTML = ''; return; }
+  if(state === 'reconnect') {
+    b.innerHTML = `
+      <div class="banner banner-warn" style="margin-bottom:16px">
+        <div>
+          <div class="banner-title">◈ Data file needs one click to reconnect</div>
+          <div class="banner-sub">After a browser restart, access to "${esc(_fileHandle?.name||'your data file')}" must be re-allowed. Until then, changes save in the browser only.</div>
+        </div>
+        <button class="btn" onclick="dataFileClick()" style="background:#ba7517;color:#fff;border-color:#ba7517;white-space:nowrap">✓ Reconnect</button>
+      </div>`;
+    return;
+  }
+  if(state === 'error') {
+    b.innerHTML = `
+      <div class="banner banner-warn" style="margin-bottom:16px">
+        <div>
+          <div class="banner-title">◈ Data file write failed</div>
+          <div class="banner-sub">The last change could not be written to "${esc(_fileHandle?.name||'the data file')}". Your books are still safe in the browser.</div>
+        </div>
+        <button class="btn" onclick="dataFileRetry()" style="white-space:nowrap">↻ Retry</button>
+      </div>`;
+    return;
+  }
+  // state 'off' — suggest connecting, unless this client said "not now"
+  if(localStorage.getItem(ck('ledger_datafile_later')) === '1') { b.innerHTML = ''; return; }
+  b.innerHTML = `
+    <div class="banner" style="margin-bottom:16px;background:var(--surface2);border:1px solid var(--border)">
+      <div>
+        <div class="banner-title">◈ Save your books to a file on this computer</div>
+        <div class="banner-sub">Right now this company's books live only inside this browser. Connect a data file for an automatic on-disk copy — put it in OneDrive/Dropbox and it follows you to any computer.</div>
+      </div>
+      <div style="display:flex;gap:8px;align-items:center;white-space:nowrap">
+        <button class="btn btn-primary" onclick="dataFileClick()">◈ Connect</button>
+        <button class="btn" onclick="dataFileLater()" style="border:none;background:none;color:var(--text3)">Not now</button>
+      </div>
+    </div>`;
+}
+function dataFileLater() {
+  try { localStorage.setItem(ck('ledger_datafile_later'), '1'); } catch(_) {}
+  updateDataFileUI('off');
+}
+function dataFileRetry() { _fileMirrorWrite(); }
+
+// ── Open-time prompt: a real dialog, whose button click is the user gesture the picker needs ──
+let _dfModalState = null;
+function maybeShowDataFilePrompt(state) {
+  if(state !== 'off' && state !== 'reconnect') return;
+  if(state === 'off' && localStorage.getItem(ck('ledger_datafile_later')) === '1') return;
+  if(document.getElementById('signin-gate')) return;                       // don't stack on the email gate
+  const w = document.getElementById('welcome-modal');
+  if(w && w.style.display !== 'none' && w.style.display !== '') return;    // don't stack on the welcome tour
+  const m = document.getElementById('datafile-modal');
+  if(!m) return;
+  _dfModalState = state;
+  document.getElementById('datafile-modal-title').textContent =
+    state === 'reconnect' ? 'Reconnect your data file' : 'Save your books to a file?';
+  document.getElementById('datafile-modal-body').innerHTML = state === 'reconnect'
+    ? `This company saves its books to <b>${esc(_fileHandle?.name||'a data file')}</b>. After a browser restart, one click is needed to re-allow access — until then, changes stay in the browser only.`
+    : `Right now this company's books live only <b>inside this browser</b> — clearing browser data would lose them.<br><br>Connect a <b>data file</b> and every change also saves automatically to a real file on this computer. Keep it in a OneDrive or Dropbox folder and your books follow you to any computer. The file doubles as an always-current backup.`;
+  document.getElementById('datafile-modal-go').textContent =
+    state === 'reconnect' ? '✓ Reconnect now' : '◈ Connect a data file';
+  m.style.display = 'flex';
+}
+function dataFileModalGo() {
+  document.getElementById('datafile-modal').style.display = 'none';
+  dataFileClick(); // this click is the user gesture — opens the picker (or re-grants permission)
+}
+function dataFileModalLater() {
+  document.getElementById('datafile-modal').style.display = 'none';
+  if(_dfModalState === 'off') dataFileLater();
 }
 
 function updateBackupStatus() {
@@ -10493,8 +10591,8 @@ txRenderOpeningBalances();
 renderAll();
 cfgUpdateBrand();
 renderClientSwitcher();
-initDataFile();        // reconnect the active client's data file, if one was set up
 showSigninGate();      // email capture before first use (once per browser)
+initDataFile(true);    // reconnect the client's data file; offer connect/reconnect dialog on open
 maybeShowWelcome();
 </script>
 
