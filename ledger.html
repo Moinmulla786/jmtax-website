@@ -598,6 +598,10 @@
         <span class="nav-icon">⬆</span> Restore Backup
       </button>
       <input type="file" id="restore-input" accept=".json" style="display:none" onchange="restoreBackup(this)">
+      <button class="nav-item" id="datafile-btn" onclick="dataFileClick()"
+        title="Save this client's books to a real file on your computer (Chrome/Edge). Put the file in a OneDrive/Dropbox folder and your books follow you to any computer.">
+        <span class="nav-icon">◈</span> <span id="datafile-label">Data File — connect</span>
+      </button>
       <button class="nav-item" onclick="startNewClient()" style="color:var(--danger)">
         <span class="nav-icon">⊘</span> Start New Client
       </button>
@@ -1679,9 +1683,10 @@
 // Every export, backup, and save is stamped with both, so any file can be traced to
 // the exact software version that produced it.
 // ═══════════════════════════════════════════════════════════════
-const APP_VERSION  = '2.7.3';
+const APP_VERSION  = '2.8.0';
 const DATA_VERSION = 1;
 const APP_CHANGELOG = [
+  ['2.8.0', '2026-07-21', 'Data File: save your books to a real file on your computer (Chrome/Edge). Sidebar → "Data File — connect" picks a file (e.g. in a OneDrive/Dropbox folder) and every change then saves to it automatically — the file is yours, works as a normal backup, and if it was updated on another computer the app offers to load the newer copy. Books also keep saving in the browser as before; disconnect any time. Backup and data files share one format, so either can be restored.'],
   ['2.7.3', '2026-07-19', 'Sign-in email quality checks, so the signup list stays usable: malformed addresses are rejected; ~30 disposable/temporary inbox services and placeholder domains (test.com, example.com) are blocked; obvious junk names (test@, asdf@, aaa@) are refused; and common domain typos offer a one-click fix ("Did you mean moin@gmail.com?"). Legitimate business addresses such as admin@ and info@ are always accepted. Note: this filters quality only — true ownership verification requires emailing a confirmation code, which needs a server.'],
   ['2.7.2', '2026-07-19', 'Sign-in gate is now live: signups are delivered to the firm\'s Formspree inbox (subject "J&M Ledger signup: <email>", reply-to set to the signup address, product-updates consent flagged). Delivery is fire-and-forget — a network or service failure never blocks access to the tool.'],
   ['2.7.1', '2026-07-19', 'Bug fix: an account with a contra balance (e.g. a journal entry crediting an expense) vanished from the P&L even though it was in the Trial Balance, and the P&L stopped agreeing with the Balance Sheet. Contra amounts now show as negatives on the P&L, and a new internal control flags any future P&L vs Balance Sheet divergence. Journal Entries table no longer repeats the account in both the Debit and Credit columns.'],
@@ -2211,6 +2216,9 @@ const save = () => {
     if(!_saveErrorShown) { _saveErrorShown = true; try { alert(msg); } catch(_) {} }
     try { console.error('save() failed:', err); } catch(_) {}
   }
+  // Mirror to the connected data file (if any) — deliberately OUTSIDE the try/catch above:
+  // when localStorage is full, the file becomes the rescue copy of the latest state.
+  try { queueFileMirror(); } catch(_) {}
 };
 function syncClientName() {
   const id = getActiveClientId();
@@ -8335,6 +8343,10 @@ function resetInMemory() {
   invNextNum = 1; hoData = { sqftTotal:0, sqftBiz:0, years:{} };
   fixedAssets = []; adjustingEntries = []; companyConfig = blankConfig();
   selectedIds.clear(); editingId = null;
+  // Data file: drop the outgoing client's handle IMMEDIATELY (synchronously) so no
+  // pending mirror write can ever put the next client's books into the old client's file.
+  _fileHandle = null;
+  if(_fileSaveTimer) { clearTimeout(_fileSaveTimer); _fileSaveTimer = null; }
 }
 
 function startNewClient() {
@@ -8362,6 +8374,7 @@ function startNewClient() {
 function switchClient(id) {
   if(id === getActiveClientId()) return;
   save(); // persist current
+  flushFileMirror(); // outgoing client's final state → its data file (payload captured synchronously)
   setActiveClientId(id);
   resetInMemory();
   load();
@@ -8369,6 +8382,7 @@ function switchClient(id) {
   showView('dashboard');
   renderAll();
   renderClientSwitcher();
+  initDataFile(); // async: pick up the incoming client's data file, if one is connected
   const c = getClients().find(x=>x.id===id);
   toast(`Switched to ${c?.name||'client'}`);
 }
@@ -8377,9 +8391,10 @@ function deleteClient(id) {
   const clients = getClients();
   if(clients.length <= 1) { toast('⚠ Cannot delete the only client'); return; }
   const c = clients.find(x=>x.id===id);
-  if(!confirm(`Delete client "${c?.name}" and ALL its data permanently?\n\nThis cannot be undone. Back up first if unsure.`)) return;
+  if(!confirm(`Delete client "${c?.name}" and ALL its data permanently?\n\nThis cannot be undone. Back up first if unsure.\n\n(Note: if this client had a connected data file, the FILE on disk is NOT deleted — only the link to it.)`)) return;
   // Remove all prefixed keys
   Object.keys(localStorage).filter(k=>k.startsWith(id+'_')).forEach(k=>localStorage.removeItem(k));
+  try { _fsDel(id); } catch(_) {} // forget the data-file link (never deletes the file itself)
   const remaining = clients.filter(x=>x.id!==id);
   setClients(remaining);
   // If deleting active client, switch to first remaining
@@ -8459,27 +8474,7 @@ document.addEventListener('click', e => {
 });
 
 function backupAllData() {
-  const backup = {
-    version: 2,
-    appVersion: APP_VERSION,
-    dataVersion: DATA_VERSION,
-    exportedAt: new Date().toISOString(),
-    exportedBy: 'Ledger Bookkeeping',
-    clientName: companyConfig.corpName || 'Unknown',
-    data: {
-      transactions,
-      openingBalances,
-      shEntries,
-      invoices,
-      invNextNum,
-      hoData,
-      fixedAssets,
-      companyConfig,
-      adjustingEntries,
-      payRuns,
-    }
-  };
-
+  const backup = buildFilePayload(); // single payload model — backup file ≡ data file
   const json = JSON.stringify(backup, null, 2);
   const dateStr = new Date().toISOString().slice(0,10);
   const filename = `ledger-backup-${dateStr}.json`;
@@ -8504,29 +8499,15 @@ function restoreBackup(input) {
     try {
       const backup = JSON.parse(e.target.result);
 
-      // Validate structure
-      if(!backup || typeof backup !== 'object' || !backup.data || !backup.version || typeof backup.data !== 'object') {
-        toast('❌ Invalid backup file — not a Ledger backup');
+      // Validate structure (shared with the Data File loader)
+      const shape = validateBackupShape(backup);
+      if(!shape.ok) {
+        toast(shape.reason === 'not-a-backup'
+          ? '❌ Invalid backup file — not a Ledger backup'
+          : `❌ Backup looks corrupted (bad: ${shape.reason}) — restore cancelled, your data is unchanged`);
         input.value=''; return;
       }
-
       const d = backup.data;
-
-      // ── Type-validate EVERY field before touching live data ──
-      // A malformed/truncated backup must NOT be allowed to overwrite (and then persist over)
-      // the user's real data. If anything is the wrong shape, abort with data unchanged.
-      const isObj = v => v && typeof v === 'object' && !Array.isArray(v);
-      const bad = [];
-      [['transactions',Array.isArray],['openingBalances',Array.isArray],['shEntries',Array.isArray],
-       ['invoices',Array.isArray],['fixedAssets',Array.isArray],['adjustingEntries',Array.isArray],
-       ['payRuns',Array.isArray],['companyConfig',isObj],['hoData',isObj]].forEach(([k,ok]) => {
-        if(d[k] !== undefined && !ok(d[k])) bad.push(k);
-      });
-      if(d.invNextNum !== undefined && !(typeof d.invNextNum==='number' || /^\d+$/.test(String(d.invNextNum)))) bad.push('invNextNum');
-      if(bad.length) {
-        toast(`❌ Backup looks corrupted (bad: ${bad.join(', ')}) — restore cancelled, your data is unchanged`);
-        input.value=''; return;
-      }
 
       const txCount    = d.transactions?.length || 0;
       const invCount   = d.invoices?.length || 0;
@@ -8547,31 +8528,9 @@ function restoreBackup(input) {
 
       if(!confirm(msg)) { input.value=''; return; }
 
-      // Snapshot current in-memory state so a failure while applying can be rolled back this session.
-      const prev = { transactions, openingBalances, shEntries, invoices, invNextNum, hoData, fixedAssets, companyConfig, adjustingEntries, payRuns };
-      try {
-        // Restore all data (use !== undefined so legit values like invNextNum:0 / empty arrays apply)
-        if(d.transactions    !== undefined) transactions    = d.transactions;
-        if(d.openingBalances !== undefined) openingBalances = d.openingBalances;
-        if(d.shEntries       !== undefined) shEntries       = d.shEntries;
-        if(d.invoices        !== undefined) invoices        = d.invoices;
-        if(d.invNextNum      !== undefined) invNextNum      = parseInt(d.invNextNum)||1;
-        if(d.hoData          !== undefined) hoData          = d.hoData;
-        if(d.fixedAssets     !== undefined) fixedAssets     = d.fixedAssets;
-        if(d.companyConfig   !== undefined) companyConfig   = d.companyConfig;
-        if(d.adjustingEntries!== undefined) adjustingEntries= d.adjustingEntries;
-        if(d.payRuns         !== undefined) payRuns         = d.payRuns;
-
-        refreshAccountSets();
-        save();
-        renderAll();
-        updateBackupStatus();
+      if(applyBackupData(d)) {
         toast(`✓ Restored ${txCount} transactions, ${invCount} invoices, ${shCount} shareholder entries from ${exportDate}`);
-      } catch(applyErr) {
-        // Roll back so the user does not lose their prior data within this session
-        ({ transactions, openingBalances, shEntries, invoices, invNextNum, hoData, fixedAssets, companyConfig, adjustingEntries, payRuns } = prev);
-        console.error(applyErr);
-        try { refreshAccountSets(); renderAll(); } catch(_) {}
+      } else {
         toast('❌ Restore failed while applying — reverted to your previous data');
       }
     } catch(err) {
@@ -8581,6 +8540,230 @@ function restoreBackup(input) {
     input.value = '';
   };
   reader.readAsText(file);
+}
+
+// ── Shared backup-shape validation + apply (used by Restore Backup AND the Data File) ──
+function validateBackupShape(backup) {
+  if(!backup || typeof backup !== 'object' || !backup.data || !backup.version || typeof backup.data !== 'object')
+    return { ok:false, reason:'not-a-backup' };
+  const d = backup.data;
+  // Type-validate EVERY field before touching live data — a malformed/truncated file must
+  // NOT be allowed to overwrite (and then persist over) the user's real data.
+  const isObj = v => v && typeof v === 'object' && !Array.isArray(v);
+  const bad = [];
+  [['transactions',Array.isArray],['openingBalances',Array.isArray],['shEntries',Array.isArray],
+   ['invoices',Array.isArray],['fixedAssets',Array.isArray],['adjustingEntries',Array.isArray],
+   ['payRuns',Array.isArray],['companyConfig',isObj],['hoData',isObj]].forEach(([k,ok]) => {
+    if(d[k] !== undefined && !ok(d[k])) bad.push(k);
+  });
+  if(d.invNextNum !== undefined && !(typeof d.invNextNum==='number' || /^\d+$/.test(String(d.invNextNum)))) bad.push('invNextNum');
+  if(bad.length) return { ok:false, reason: bad.join(', ') };
+  return { ok:true, d };
+}
+
+function applyBackupData(d) {
+  // Caller must validate (validateBackupShape) and confirm with the user first.
+  // Snapshot current in-memory state so a failure while applying can be rolled back this session.
+  const prev = { transactions, openingBalances, shEntries, invoices, invNextNum, hoData, fixedAssets, companyConfig, adjustingEntries, payRuns };
+  try {
+    // Apply all data (use !== undefined so legit values like invNextNum:0 / empty arrays apply)
+    if(d.transactions    !== undefined) transactions    = d.transactions;
+    if(d.openingBalances !== undefined) openingBalances = d.openingBalances;
+    if(d.shEntries       !== undefined) shEntries       = d.shEntries;
+    if(d.invoices        !== undefined) invoices        = d.invoices;
+    if(d.invNextNum      !== undefined) invNextNum      = parseInt(d.invNextNum)||1;
+    if(d.hoData          !== undefined) hoData          = d.hoData;
+    if(d.fixedAssets     !== undefined) fixedAssets     = d.fixedAssets;
+    if(d.companyConfig   !== undefined) companyConfig   = d.companyConfig;
+    if(d.adjustingEntries!== undefined) adjustingEntries= d.adjustingEntries;
+    if(d.payRuns         !== undefined) payRuns         = d.payRuns;
+
+    refreshAccountSets();
+    save();
+    renderAll();
+    updateBackupStatus();
+    return true;
+  } catch(applyErr) {
+    // Roll back so the user does not lose their prior data within this session
+    ({ transactions, openingBalances, shEntries, invoices, invNextNum, hoData, fixedAssets, companyConfig, adjustingEntries, payRuns } = prev);
+    console.error(applyErr);
+    try { refreshAccountSets(); renderAll(); } catch(_) {}
+    return false;
+  }
+}
+
+// ═══════════════════ DATA FILE — books saved to a real file on this PC ═══════════════════
+// Mirrors the active client's books to a user-chosen .json file via the File System Access
+// API (Chrome/Edge). localStorage stays the fast working copy; the file is a continuously
+// updated on-disk copy the USER owns. Put it in a OneDrive/Dropbox folder and the books
+// follow them to any computer — no server, no data held by the firm.
+const FILE_SYNC_SUPPORTED = typeof window !== 'undefined' && 'showSaveFilePicker' in window;
+let _fileHandle = null;      // connected FileSystemFileHandle for the ACTIVE client
+let _fileSaveTimer = null;   // debounce timer for mirror writes
+let _fileSaveFailed = false; // toast-once latch, mirrors save()'s pattern
+
+// File handles cannot be stored in localStorage — a tiny IndexedDB store keyed by client id.
+function _fsdb() {
+  return new Promise((res, rej) => {
+    const r = indexedDB.open('ledger-filesync', 1);
+    r.onupgradeneeded = () => r.result.createObjectStore('handles');
+    r.onsuccess = () => res(r.result);
+    r.onerror   = () => rej(r.error);
+  });
+}
+async function _fsPut(key, val) { const db = await _fsdb(); return new Promise((res,rej)=>{ const t=db.transaction('handles','readwrite'); t.objectStore('handles').put(val,key); t.oncomplete=()=>res(); t.onerror=()=>rej(t.error); }); }
+async function _fsGet(key)      { const db = await _fsdb(); return new Promise((res,rej)=>{ const t=db.transaction('handles','readonly');  const q=t.objectStore('handles').get(key); q.onsuccess=()=>res(q.result||null); q.onerror=()=>rej(q.error); }); }
+async function _fsDel(key)      { const db = await _fsdb(); return new Promise((res,rej)=>{ const t=db.transaction('handles','readwrite'); t.objectStore('handles').delete(key); t.oncomplete=()=>res(); t.onerror=()=>rej(t.error); }); }
+
+function buildFilePayload() {
+  // Identical shape to Backup All Data — a data file IS a valid backup and vice versa.
+  return {
+    version: 2,
+    appVersion: APP_VERSION,
+    dataVersion: DATA_VERSION,
+    exportedAt: new Date().toISOString(),
+    exportedBy: 'Ledger Bookkeeping',
+    clientName: companyConfig.corpName || 'Unknown',
+    data: { transactions, openingBalances, shEntries, invoices, invNextNum, hoData, fixedAssets, companyConfig, adjustingEntries, payRuns }
+  };
+}
+
+function queueFileMirror() {
+  if(!_fileHandle) return;
+  if(_fileSaveTimer) clearTimeout(_fileSaveTimer);
+  _fileSaveTimer = setTimeout(() => { _fileSaveTimer = null; _fileMirrorWrite(); }, 800);
+}
+function flushFileMirror() {
+  // Synchronous capture, async write — used before client switches so the outgoing
+  // client's final state lands in ITS file even though the write completes later.
+  if(_fileSaveTimer) { clearTimeout(_fileSaveTimer); _fileSaveTimer = null; }
+  if(_fileHandle) _fileMirrorWrite();
+}
+async function _fileMirrorWrite() {
+  const handle = _fileHandle;                 // capture BEFORE any await —
+  if(!handle) return;
+  const json = JSON.stringify(buildFilePayload(), null, 2);  // — so a client switch mid-write can't mix data
+  const stampKey = ck('ledger_filestamp');
+  try {
+    if((await handle.queryPermission({mode:'readwrite'})) !== 'granted') { updateDataFileUI('reconnect'); return; }
+    const w = await handle.createWritable();
+    await w.write(json);
+    await w.close();
+    try { localStorage.setItem(stampKey, JSON.parse(json).exportedAt); } catch(_) {}
+    _fileSaveFailed = false;
+    updateDataFileUI('on');
+  } catch(err) {
+    if(!_fileSaveFailed) { _fileSaveFailed = true; try { toast('⚠ Could not write the data file — will retry on your next change'); } catch(_) {} }
+    try { console.error('data file write failed:', err); } catch(_) {}
+    updateDataFileUI('error');
+  }
+}
+
+async function connectDataFile() {
+  const id = getActiveClientId();
+  if(!id) { toast('Set up a client first'); return; }
+  const base = (companyConfig.corpName || 'ledger').replace(/[^\w\- ]+/g,'').trim() || 'ledger';
+  let handle;
+  try {
+    handle = await showSaveFilePicker({
+      suggestedName: `${base}-books.json`,
+      types: [{ description: 'Ledger data file', accept: { 'application/json': ['.json'] } }]
+    });
+  } catch(e) { return; /* user cancelled the picker */ }
+  try {
+    _fileHandle = handle;
+    await _fsPut(id, handle);
+    await _fileMirrorWrite();
+    toast(`✓ Data file connected — books now save to "${handle.name}" automatically`);
+  } catch(e) {
+    _fileHandle = null;
+    try { console.error(e); } catch(_) {}
+    toast('❌ Could not connect the data file');
+  }
+}
+
+async function dataFileClick() {
+  if(!FILE_SYNC_SUPPORTED) {
+    alert('Saving to a file needs Chrome or Microsoft Edge.\n\nIn this browser, use "Backup All Data" for a manual file copy instead.');
+    return;
+  }
+  if(!_fileHandle) { await connectDataFile(); return; }
+  let perm = 'prompt';
+  try { perm = await _fileHandle.queryPermission({mode:'readwrite'}); } catch(_) {}
+  if(perm !== 'granted') {
+    // This click is the user gesture the browser requires to re-grant access.
+    try { perm = await _fileHandle.requestPermission({mode:'readwrite'}); } catch(_) {}
+    if(perm === 'granted') {
+      updateDataFileUI('on');
+      await checkDataFileNewer();
+      await _fileMirrorWrite();
+      toast('✓ Data file reconnected');
+    }
+    return;
+  }
+  if(confirm(`Data file "${_fileHandle.name||''}" is connected — books save to it automatically.\n\nOK = disconnect (books stay in this browser; the file just stops updating)\nCancel = keep it connected`)) {
+    const id = getActiveClientId();
+    try { await _fsDel(id); } catch(_) {}
+    _fileHandle = null;
+    updateDataFileUI('off');
+    toast('Data file disconnected — books remain in this browser');
+  }
+}
+
+async function checkDataFileNewer() {
+  // If the file was written elsewhere (another computer via a synced folder), offer to load it.
+  if(!_fileHandle) return;
+  try {
+    const f = await _fileHandle.getFile();
+    const text = await f.text();
+    if(!text.trim()) return;
+    const backup = JSON.parse(text);
+    const stamp = localStorage.getItem(ck('ledger_filestamp')) || '';
+    if(!backup.exportedAt || backup.exportedAt === stamp) return;
+    if(new Date(backup.exportedAt) <= new Date(stamp || 0)) return;
+    const shape = validateBackupShape(backup);
+    if(!shape.ok) { toast('⚠ Data file has changed but looks invalid — leaving your browser copy untouched'); return; }
+    const when = new Date(backup.exportedAt).toLocaleString('en-CA');
+    const txCount = shape.d.transactions?.length || 0;
+    if(confirm(`Your data file was updated elsewhere (${when}) — e.g. on another computer.\n\nLoad the file's books (${txCount} transactions, client "${backup.clientName||'?'}") into this browser?\n\nOK = load the file (replaces this browser's copy of this client)\nCancel = keep the browser copy (the file will be overwritten on your next change)`)) {
+      if(applyBackupData(shape.d)) {
+        try { localStorage.setItem(ck('ledger_filestamp'), backup.exportedAt); } catch(_) {}
+        toast('✓ Books loaded from the data file');
+      } else {
+        toast('❌ Could not load the data file — reverted to your previous data');
+      }
+    } else {
+      // User chose the browser copy — record the file stamp so we don't re-ask every load.
+      try { localStorage.setItem(ck('ledger_filestamp'), backup.exportedAt); } catch(_) {}
+    }
+  } catch(_) { /* unreadable file: leave browser copy authoritative */ }
+}
+
+async function initDataFile() {
+  if(!FILE_SYNC_SUPPORTED) { updateDataFileUI('unsupported'); return; }
+  _fileHandle = null;
+  const id = getActiveClientId();
+  if(!id) { updateDataFileUI('off'); return; }
+  try { _fileHandle = await _fsGet(id); } catch(_) {}
+  if(!_fileHandle) { updateDataFileUI('off'); return; }
+  let perm = 'prompt';
+  try { perm = await _fileHandle.queryPermission({mode:'readwrite'}); } catch(_) {}
+  if(perm !== 'granted') { updateDataFileUI('reconnect'); return; }
+  updateDataFileUI('on');
+  await checkDataFileNewer();
+}
+
+function updateDataFileUI(state) {
+  const btn = document.getElementById('datafile-btn');
+  const lbl = document.getElementById('datafile-label');
+  if(!btn || !lbl) return;
+  const name = _fileHandle?.name ? ` (${_fileHandle.name})` : '';
+  if(state === 'unsupported') { lbl.textContent = 'Data File — needs Chrome/Edge'; btn.style.opacity = '.55'; return; }
+  btn.style.opacity = '';
+  if(state === 'on')             { lbl.textContent = `Data File ✓${name}`; }
+  else if(state === 'reconnect') { lbl.textContent = 'Data File ⚠ click to reconnect'; }
+  else if(state === 'error')     { lbl.textContent = 'Data File ⚠ write failed'; }
+  else                           { lbl.textContent = 'Data File — connect'; }
 }
 
 function updateBackupStatus() {
@@ -10307,6 +10490,7 @@ txRenderOpeningBalances();
 renderAll();
 cfgUpdateBrand();
 renderClientSwitcher();
+initDataFile();        // reconnect the active client's data file, if one was set up
 showSigninGate();      // email capture before first use (once per browser)
 maybeShowWelcome();
 </script>

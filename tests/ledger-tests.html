@@ -645,6 +645,40 @@ test('Email quality checks: block junk, suggest typos, never block real business
   return {pass: bad.length===0, got: bad.length ? bad.slice(0,3).join(' | ') : 'all 25 cases correct'};
 `);
 
+group('Data file (v2.8.0)');
+
+test('buildFilePayload: every persisted collection present + versioned', `
+  const p = buildFilePayload();
+  const keys = ['transactions','openingBalances','shEntries','invoices','invNextNum','hoData','fixedAssets','companyConfig','adjustingEntries','payRuns'];
+  const missing = keys.filter(k => !(k in p.data));
+  const metaOk = p.version === 2 && !!p.appVersion && p.dataVersion >= 1 && !!p.exportedAt;
+  return {pass: missing.length===0 && metaOk,
+          got: missing.length ? 'missing: '+missing.join(',') : (metaOk ? 'all 10 collections + meta' : 'bad meta')};
+`);
+
+test('validateBackupShape: rejects non-backups and wrong types, accepts good', `
+  const bad1 = validateBackupShape(null);
+  const bad2 = validateBackupShape({version:2});                                  // no data
+  const bad3 = validateBackupShape({version:2, data:{transactions:'nope'}});      // wrong type
+  const bad4 = validateBackupShape({version:2, data:{companyConfig:[1,2]}});      // array not obj
+  const good = validateBackupShape({version:2, data:{transactions:[], invNextNum: 3}});
+  const ok = !bad1.ok && !bad2.ok && !bad3.ok && !bad4.ok && good.ok;
+  return {pass: ok, got: ok ? 'all shapes judged correctly'
+    : JSON.stringify({bad1:bad1.ok,bad2:bad2.ok,bad3:bad3.ok,bad4:bad4.ok,good:good.ok})};
+`);
+
+test('applyBackupData: applies good data; restore path still round-trips', `
+  __reset();
+  const okApply = applyBackupData({
+    transactions: [{id:'t1', date:'2026-01-05', account:'Chequing', category:'Sales Revenue', amount:100}],
+    invNextNum: 7,
+    companyConfig: companyConfig
+  });
+  const applied = okApply && transactions.length===1 && invNextNum===7;
+  const tb = __tbDiff();
+  return {pass: applied && tb===0, got: 'applied='+applied+' tbDiff='+tb};
+`);
+
 /* ════════════ runner ════════════ */
 const iframe = document.getElementById('app');
 iframe.onload = () => setTimeout(run, 400);
